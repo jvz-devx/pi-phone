@@ -59,12 +59,12 @@ For local development or bleeding-edge testing, you can install from git:
 pi install git:github.com/jvz-devx/pi-phone@master
 ```
 
-Git installs may fetch repository development dependencies, which can pull nested Pi core packages that differ from the Pi runtime you are using. Prefer the npm package above for normal use. If your package manager or Pi install flow supports it, omit development dependencies for git installs (for example, use an `--omit=dev`/production install mode) unless you are actively developing the extension.
+Git installs use this repository's `.npmrc` to omit development dependencies by default, which avoids nested Pi core packages that can differ from the Pi runtime you are using. Prefer the npm package above for normal use.
 
-On Nix/NixOS, enter the pinned development shell and run verification with:
+On Nix/NixOS, enter the pinned development shell and install development dependencies explicitly before running verification:
 
 ```bash
-nix develop path:$PWD -c npm install
+nix develop path:$PWD -c npm install --include=dev
 nix develop path:$PWD -c npm test
 ```
 
