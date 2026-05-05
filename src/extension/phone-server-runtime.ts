@@ -6,11 +6,12 @@ import type {
   InputEventResult,
 } from "@mariozechner/pi-coding-agent";
 import { randomBytes } from "node:crypto";
-import { existsSync, statSync } from "node:fs";
+import { existsSync, realpathSync, statSync } from "node:fs";
 import { readFile } from "node:fs/promises";
 import { createServer, type IncomingMessage, type Server, type ServerResponse } from "node:http";
-import { extname } from "node:path";
-import { WebSocketServer, type RawData, type WebSocket } from "ws";
+import { createRequire } from "node:module";
+import { delimiter, dirname, extname, join, resolve } from "node:path";
+import type { RawData, WebSocket, WebSocketServer } from "ws";
 import { PhoneParentSessionWorker } from "../session-pool/parent-session-worker";
 import { PhoneSessionPool } from "../session-pool/session-pool";
 import { PhoneSessionWorker } from "../session-pool/session-worker";
@@ -47,6 +48,110 @@ type SlashCommandMatch = {
 };
 
 const DEFAULT_IDLE_TIMEOUT_MS = 2 * 60 * 60_000;
+
+type WsModule = typeof import("ws");
+
+const extensionRequire = createRequire(import.meta.url);
+let cachedWsModule: WsModule | null = null;
+
+function normalizeWsModule(moduleValue: unknown): WsModule | null {
+  const candidate = moduleValue as Partial<WsModule> & { default?: Partial<WsModule> };
+  const moduleWithServer = candidate.WebSocketServer ? candidate : candidate.default;
+  return moduleWithServer?.WebSocketServer ? (moduleWithServer as WsModule) : null;
+}
+
+function addRequireForPath(requires: NodeRequire[], candidatePath: string | undefined) {
+  if (!candidatePath) return;
+
+  const add = (path: string) => {
+    try {
+      const resolvedPath = resolve(path);
+      if (!existsSync(resolvedPath)) return;
+      const stats = statSync(resolvedPath);
+      requires.push(createRequire(stats.isDirectory() ? join(resolvedPath, "package.json") : resolvedPath));
+    } catch {
+      // Ignore invalid or inaccessible paths. They are only best-effort fallback roots.
+    }
+  };
+
+  add(candidatePath);
+  try {
+    add(realpathSync(candidatePath));
+  } catch {
+    // Symlink resolution is best-effort.
+  }
+}
+
+function buildWsFallbackRequires() {
+  const requires: NodeRequire[] = [extensionRequire];
+  addRequireForPath(requires, process.argv[1]);
+  addRequireForPath(requires, process.env._);
+  addRequireForPath(requires, process.cwd());
+
+  for (const nodePath of (process.env.NODE_PATH || "").split(delimiter)) {
+    addRequireForPath(requires, nodePath);
+  }
+
+  const nodePrefix = dirname(dirname(process.execPath));
+  const piPackageSubpath = join("lib", "node_modules", "@mariozechner", "pi-coding-agent", "package.json");
+  for (const prefix of [process.env.npm_config_prefix, nodePrefix, join(process.env.HOME || "", ".npm-global"), "/usr/local", "/usr"]) {
+    addRequireForPath(requires, prefix && join(prefix, piPackageSubpath));
+  }
+
+  for (const req of [...requires]) {
+    try {
+      const piPackageJson = req.resolve("@mariozechner/pi-coding-agent/package.json");
+      addRequireForPath(requires, piPackageJson);
+      addRequireForPath(requires, dirname(piPackageJson));
+    } catch {
+      // Pi may not be resolvable from every root when this extension is git-installed.
+    }
+  }
+
+  return requires;
+}
+
+function tryRequireWs(req: NodeRequire) {
+  try {
+    return normalizeWsModule(req("ws"));
+  } catch {
+    // Try explicit resolution below so a require rooted at Pi can still locate its bundled ws.
+  }
+
+  try {
+    const resolvedWs = req.resolve("ws");
+    return normalizeWsModule(req(resolvedWs));
+  } catch {
+    return null;
+  }
+}
+
+async function loadWsModule() {
+  if (cachedWsModule) return cachedWsModule;
+
+  let importError: unknown;
+  try {
+    const moduleValue = await import("ws");
+    const wsModule = normalizeWsModule(moduleValue);
+    if (wsModule) {
+      cachedWsModule = wsModule;
+      return wsModule;
+    }
+  } catch (error) {
+    importError = error;
+  }
+
+  for (const req of buildWsFallbackRequires()) {
+    const wsModule = tryRequireWs(req);
+    if (wsModule) {
+      cachedWsModule = wsModule;
+      return wsModule;
+    }
+  }
+
+  const message = importError instanceof Error ? importError.message : String(importError || "unknown error");
+  throw new Error(`Unable to load the ws package required by Pi Phone. Tried the extension install and Pi runtime fallbacks. Last error: ${message}`);
+}
 
 function readPositivePort(value: string | undefined, fallback: number) {
   const port = Number(value);
@@ -768,6 +873,7 @@ export class PhoneServerRuntime {
       });
     });
 
+    const { WebSocketServer } = await loadWsModule();
     this.wss = new WebSocketServer({ noServer: true });
 
     this.wss.on("connection", (ws: WebSocket) => {
