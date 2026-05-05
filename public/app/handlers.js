@@ -15,6 +15,7 @@ import { refreshAll, refreshQuota, sendRpc } from "./transport.js";
 import {
   autoResizeTextarea,
   clearUiModal,
+  forgetUiModalDraftForRequest,
   openTokenModal,
   openUiModalForRequest,
   renderHeader,
@@ -29,7 +30,7 @@ export function handleAuthFailure() {
   resetToken({ clearInput: true });
   state.socket = null;
   closeSheet();
-  clearUiModal();
+  clearUiModal({ discardDraft: true });
   renderHeader();
   openTokenModal();
   showBanner("Access token required. Enter the current /phone-start token.", "error");
@@ -40,13 +41,14 @@ function sendUiResponse(payload) {
   const pendingId = pending?.id == null ? "" : String(pending.id);
   const responseId = payload?.id == null ? "" : String(payload.id);
   if (!pendingId || !responseId || pendingId !== responseId) {
-    clearUiModal();
+    clearUiModal({ discardDraft: true });
     showToast("That UI request is no longer pending.", "error");
     return;
   }
 
   if (sendRpc({ type: "extension_ui_response", sessionWorkerId: pending.sessionWorkerId, ...payload })) {
-    clearUiModal();
+    forgetUiModalDraftForRequest(pending);
+    clearUiModal({ discardDraft: true });
   }
 }
 
@@ -361,7 +363,7 @@ export async function handleEnvelope(event) {
     state.activeSessionId = nextActiveSessionId;
 
     if (activeSessionChanged) {
-      clearUiModal();
+      clearUiModal({ discardDraft: true });
     }
 
     if (activeSessionChanged && state.snapshotWorkerId && state.snapshotWorkerId !== state.activeSessionId) {

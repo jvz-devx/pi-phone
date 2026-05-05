@@ -15,6 +15,8 @@ export class PhoneSessionPool {
   private readonly catalogSignatures = new Map<WebSocket, string>();
   private defaultWorkerId: string | null = null;
   private defaultWorkerPromise: Promise<SessionController> | null = null;
+  private pendingUiCancelTimer: ReturnType<typeof setTimeout> | null = null;
+  private readonly pendingUiCancelGraceMs = 15_000;
 
   constructor(options: PhoneSessionPoolOptions) {
     this.options = options;
@@ -255,7 +257,15 @@ export class PhoneSessionPool {
     }
   }
 
+  private clearPendingUiCancelTimer() {
+    if (this.pendingUiCancelTimer) {
+      clearTimeout(this.pendingUiCancelTimer);
+      this.pendingUiCancelTimer = null;
+    }
+  }
+
   async addClient(ws: WebSocket) {
+    this.clearPendingUiCancelTimer();
     if (!this.clients.has(ws)) {
       this.clients.set(ws, { activeSessionId: null });
     }
@@ -293,28 +303,34 @@ export class PhoneSessionPool {
   }
 
   private cancelPendingUiRequestsAfterLastDisconnect() {
-    const pendingWorkers = this.getSessions().filter((worker) => worker.pendingUiRequest && worker.cancelPendingUiRequest);
-    if (pendingWorkers.length === 0) return;
+    this.clearPendingUiCancelTimer();
+    this.pendingUiCancelTimer = setTimeout(() => {
+      this.pendingUiCancelTimer = null;
+      if (this.clients.size > 0) return;
 
-    void (async () => {
-      try {
-        await Promise.all(pendingWorkers.map(async (worker) => {
-          try {
-            await worker.cancelPendingUiRequest?.();
-          } catch (error) {
-            const message = error instanceof Error ? error.message : String(error);
-            worker.lastError = message;
-            console.warn(`Failed to cancel pending UI request for session ${worker.id}: ${message}`);
-          }
-        }));
-      } finally {
-        this.broadcastCatalog();
-        this.broadcastStatus();
-      }
-    })().catch((error) => {
-      const message = error instanceof Error ? error.message : String(error);
-      console.warn(`Failed to cancel pending UI requests after last client disconnect: ${message}`);
-    });
+      const pendingWorkers = this.getSessions().filter((worker) => worker.pendingUiRequest && worker.cancelPendingUiRequest);
+      if (pendingWorkers.length === 0) return;
+
+      void (async () => {
+        try {
+          await Promise.all(pendingWorkers.map(async (worker) => {
+            try {
+              await worker.cancelPendingUiRequest?.();
+            } catch (error) {
+              const message = error instanceof Error ? error.message : String(error);
+              worker.lastError = message;
+              console.warn(`Failed to cancel pending UI request for session ${worker.id}: ${message}`);
+            }
+          }));
+        } finally {
+          this.broadcastCatalog();
+          this.broadcastStatus();
+        }
+      })().catch((error) => {
+        const message = error instanceof Error ? error.message : String(error);
+        console.warn(`Failed to cancel pending UI requests after last client disconnect: ${message}`);
+      });
+    }, this.pendingUiCancelGraceMs);
   }
 
   removeClient(ws: WebSocket) {
@@ -505,6 +521,7 @@ export class PhoneSessionPool {
   async closeAllClients(options: { payload?: unknown; code?: number; reason?: string } = {}) {
     const { payload, code = 1000, reason = "closing" } = options;
     const sockets = this.getClients();
+    this.clearPendingUiCancelTimer();
     this.clients.clear();
     this.statusSignatures.clear();
     this.catalogSignatures.clear();
@@ -522,6 +539,7 @@ export class PhoneSessionPool {
   }
 
   async dispose() {
+    this.clearPendingUiCancelTimer();
     await this.closeAllClients();
     await Promise.all([...this.workers.values()].map(async (worker) => worker.dispose().catch(() => {})));
     this.workers.clear();

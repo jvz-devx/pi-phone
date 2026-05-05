@@ -344,22 +344,45 @@ export function closeTokenModal() {
   el.loginModal.classList.add("hidden");
 }
 
-export function clearUiModal() {
+function uiRequestKey(request) {
+  if (!request || request.id == null) return "";
+  return `${request.sessionWorkerId || ""}:${request.id}`;
+}
+
+function saveUiModalDraft() {
+  const request = state.pendingUiRequest;
+  const key = uiRequestKey(request);
+  if (!key || !["input", "editor"].includes(request?.method)) return;
+  state.uiModalDrafts.set(key, el.uiModalInput.value);
+}
+
+export function forgetUiModalDraftForRequest(request) {
+  const key = uiRequestKey(request);
+  if (key) state.uiModalDrafts.delete(key);
+}
+
+export function clearUiModal(options = {}) {
+  if (options.discardDraft) forgetUiModalDraftForRequest(state.pendingUiRequest);
+  else saveUiModalDraft();
   state.pendingUiRequest = null;
   el.uiModal.classList.add("hidden");
   el.uiModalOptions.innerHTML = "";
   el.uiModalButtons.innerHTML = "";
   el.uiModalInput.value = "";
+  el.uiModalInput.oninput = null;
   el.uiModalInput.classList.add("hidden");
 }
 
 export function openUiModalForRequest(request, onResponse) {
+  const requestKey = uiRequestKey(request);
   state.pendingUiRequest = request;
   el.uiModalTitle.textContent = request.title || "Action required";
   el.uiModalMessage.textContent = request.message || "";
   el.uiModalOptions.innerHTML = "";
   el.uiModalButtons.innerHTML = "";
-  el.uiModalInput.value = request.prefill || "";
+  const draft = requestKey ? state.uiModalDrafts.get(requestKey) : undefined;
+  el.uiModalInput.value = draft ?? request.prefill ?? "";
+  el.uiModalInput.oninput = null;
   el.uiModalInput.classList.add("hidden");
 
   const addCancel = () => {
@@ -394,6 +417,9 @@ export function openUiModalForRequest(request, onResponse) {
   } else if (request.method === "input" || request.method === "editor") {
     el.uiModalInput.classList.remove("hidden");
     el.uiModalInput.placeholder = request.placeholder || "";
+    el.uiModalInput.oninput = () => {
+      if (requestKey) state.uiModalDrafts.set(requestKey, el.uiModalInput.value);
+    };
 
     const submitButton = document.createElement("button");
     submitButton.textContent = "Submit";

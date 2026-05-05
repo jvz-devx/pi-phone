@@ -327,7 +327,7 @@ export function prepareSessionSelection(sessionId) {
     return false;
   }
 
-  clearUiModal();
+  clearUiModal({ discardDraft: true });
   clearSnapshotView();
   setFollowLatest(true);
   renderHeader();
@@ -366,7 +366,7 @@ export function prepareSessionSpawn() {
     return false;
   }
 
-  clearUiModal();
+  clearUiModal({ discardDraft: true });
   clearSnapshotView();
   setFollowLatest(true);
   renderHeader();

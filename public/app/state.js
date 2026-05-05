@@ -25,6 +25,7 @@ export const state = {
   ignoreScrollTrackingUntil: 0,
   lastUserScrollIntentAt: 0,
   pendingUiRequest: null,
+  uiModalDrafts: new Map(),
   socket: null,
   reconnectTimer: null,
   manuallyClosed: false,
