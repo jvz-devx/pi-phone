@@ -30,11 +30,13 @@ A phone-first remote UI for [Pi](https://pi.dev) that lets you drive a real Pi s
 
 ## Install
 
-Install `pi-phone` from npm with Pi:
+Install the published npm package with Pi:
 
 ```bash
-pi install git:https://github.com/jvz-devx/pi-phone@master
+pi install npm:@malinamnam/pi-phone
 ```
+
+This is the recommended install path. It uses the packaged extension artifacts and avoids git-install dependency skew from development-only dependencies or nested Pi core packages.
 
 Then either restart Pi or run:
 
@@ -50,6 +52,14 @@ pi config
 ```
 
 ## Development
+
+For local development or bleeding-edge testing, you can install from git:
+
+```bash
+pi install git:github.com/jvz-devx/pi-phone@master
+```
+
+Git installs may fetch repository development dependencies, which can pull nested Pi core packages that differ from the Pi runtime you are using. Prefer the npm package above for normal use. If your package manager or Pi install flow supports it, omit development dependencies for git installs (for example, use an `--omit=dev`/production install mode) unless you are actively developing the extension.
 
 On Nix/NixOS, enter the pinned development shell and run verification with:
 

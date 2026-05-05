@@ -93,6 +93,40 @@ export function refreshAll(options = {}) {
   void refreshQuota({ force: forceQuota });
 }
 
+function isTokenRejectedHealth(health) {
+  return Boolean(health?.hasToken && !health?.cwd);
+}
+
+function scheduleReconnect({ handleEnvelope, handleAuthFailure }) {
+  if (state.manuallyClosed) return;
+
+  clearReconnectTimer();
+  state.reconnectTimer = setTimeout(async () => {
+    clearReconnectTimer();
+
+    if (state.token) {
+      try {
+        await loadHealth();
+      } catch (error) {
+        if (error?.status === 401 || error?.status === 403) {
+          handleAuthFailure();
+          return;
+        }
+        showBanner(error instanceof Error ? error.message : "Failed to reach server.", "error");
+        scheduleReconnect({ handleEnvelope, handleAuthFailure });
+        return;
+      }
+
+      if (isTokenRejectedHealth(state.health)) {
+        handleAuthFailure();
+        return;
+      }
+    }
+
+    connectSocket({ handleEnvelope, handleAuthFailure });
+  }, 1800);
+}
+
 export function connectSocket({ handleEnvelope, handleAuthFailure }) {
   clearReconnectTimer();
   if (state.socket && (state.socket.readyState === WebSocket.OPEN || state.socket.readyState === WebSocket.CONNECTING)) {
@@ -142,10 +176,7 @@ export function connectSocket({ handleEnvelope, handleAuthFailure }) {
     if (event.code === 1006) {
       showBanner("Connection lost. Retrying…", "error");
     }
-    if (!state.manuallyClosed) {
-      clearReconnectTimer();
-      state.reconnectTimer = setTimeout(() => connectSocket({ handleEnvelope, handleAuthFailure }), 1800);
-    }
+    scheduleReconnect({ handleEnvelope, handleAuthFailure });
   });
 
   socket.addEventListener("error", () => {
@@ -177,7 +208,7 @@ export async function validateToken(nextToken) {
     }
     throw error;
   }
-  if (health?.hasToken && !health?.cwd) {
+  if (isTokenRejectedHealth(health)) {
     throw new Error("The token was rejected. Enter the current /phone-start token.");
   }
   return health;
@@ -209,8 +240,7 @@ export async function boot({ handleEnvelope, handleAuthFailure }) {
   }
 
   clearReconnectTimer();
-  const authenticatedHealth = Boolean(state.health?.cwd);
-  if (state.health?.hasToken && state.token && !authenticatedHealth) {
+  if (state.token && isTokenRejectedHealth(state.health)) {
     handleAuthFailure();
     return;
   }

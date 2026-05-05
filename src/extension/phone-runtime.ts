@@ -1,4 +1,4 @@
-import { mkdir, readFile, unlink, writeFile } from "node:fs/promises";
+import { chmod, mkdir, readFile, unlink, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import type { PersistedPhoneRuntime } from "./types";
@@ -34,7 +34,10 @@ export function getPersistedRuntimeStatePath(host: string, port: number) {
 
 export async function readPersistedRuntimeState(host: string, port: number): Promise<PersistedPhoneRuntime | null> {
   try {
-    const payload = await readFile(getPersistedRuntimeStatePath(host, port), "utf8");
+    const statePath = getPersistedRuntimeStatePath(host, port);
+    await chmodIfExists(runtimeStateDir, 0o700);
+    await chmodIfExists(statePath, 0o600);
+    const payload = await readFile(statePath, "utf8");
     const parsed = JSON.parse(payload);
     if (!parsed || typeof parsed !== "object") return null;
     if (typeof parsed.host !== "string" || typeof parsed.port !== "number" || typeof parsed.controlToken !== "string") {
@@ -54,16 +57,27 @@ export async function readPersistedRuntimeState(host: string, port: number): Pro
   }
 }
 
+async function chmodIfExists(pathToChmod: string, mode: number) {
+  try {
+    await chmod(pathToChmod, mode);
+  } catch (error: any) {
+    if (error?.code !== "ENOENT") throw error;
+  }
+}
+
 export async function writePersistedRuntimeState(host: string, port: number, controlToken: string) {
   const nextPath = getPersistedRuntimeStatePath(host, port);
-  await mkdir(runtimeStateDir, { recursive: true });
+  await mkdir(runtimeStateDir, { recursive: true, mode: 0o700 });
+  await chmod(runtimeStateDir, 0o700);
+  await chmodIfExists(nextPath, 0o600);
   await writeFile(nextPath, JSON.stringify({
     pid: process.pid,
     host,
     port,
     controlToken,
     startedAt: new Date().toISOString(),
-  } satisfies PersistedPhoneRuntime, null, 2), "utf8");
+  } satisfies PersistedPhoneRuntime, null, 2), { encoding: "utf8", mode: 0o600 });
+  await chmod(nextPath, 0o600);
   return nextPath;
 }
 
