@@ -150,6 +150,8 @@ function renderActiveSessionsSheet() {
   const sessions = sortedActiveSessions();
   const parentSessions = sessions.filter((session) => session.kind === "parent");
   const parallelSessions = sessions.filter((session) => session.kind === "parallel");
+  const parentControlsUnavailable = parentSessions.some((session) => session.commandContextAvailable === false)
+    || (state.status?.sessionKind === "parent" && state.status?.commandContextAvailable === false);
 
   const renderSessionButton = (session, sectionKind) => {
     const statusBits = [
@@ -178,7 +180,7 @@ function renderActiveSessionsSheet() {
     <section class="sheet-section">
       <h3>Parent</h3>
       <div class="button-row compact">
-        <button class="secondary" data-sheet-action="new-parent-session">New Parent</button>
+        <button class="secondary" data-sheet-action="new-parent-session" ${parentControlsUnavailable ? "disabled" : ""}>New Parent</button>
       </div>
       <div class="sheet-list">
         ${parentSessions.length

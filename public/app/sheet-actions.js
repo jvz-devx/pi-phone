@@ -2,6 +2,7 @@ import { renderCommandSuggestions } from "./autocomplete-controller.js";
 import {
   handleInsertOnlyLocalCommand,
   insertSlashCommand,
+  parentCommandControlsAvailable,
   prepareParentSessionNew,
   prepareSessionSelection,
   prepareSessionSpawn,
@@ -71,6 +72,10 @@ function refreshSheet() {
 }
 
 function handleNewParentSession() {
+  if (!parentCommandControlsAvailable()) {
+    prepareParentSessionNew();
+    return;
+  }
   if (!prepareParentSessionNew()) return;
   closeSheet();
 }

@@ -516,14 +516,7 @@ export class PhoneParentSessionWorker implements SessionController {
       throw new Error(this.commandContextUnavailableMessage("session switch"));
     }
 
-    const result = await commandCtx.switchSession(sessionPath, {
-      // Pi >= 0.73 invalidates the command context used to replace the session.
-      // Refresh our cached context from the replacement callback when available.
-      withSession: async (replacementCtx) => {
-        this.options.onReplacementContext?.(replacementCtx);
-        this.captureContext(replacementCtx, { emitSnapshot: true });
-      },
-    });
+    const result = await (commandCtx as any).switchSession(sessionPath, this.replacementOptions());
     await this.refreshCachedSnapshot();
     this.emitSnapshot();
     return result;
@@ -545,17 +538,21 @@ export class PhoneParentSessionWorker implements SessionController {
     await this.refreshCachedSnapshot();
   }
 
+  private refreshCachedSnapshotFromContext(ctx: ExtensionContext | ExtensionCommandContext): SessionSnapshot {
+    this.cwd = ctx.sessionManager.getCwd();
+    const { state, messages } = this.buildStateFromContext(ctx);
+    const commands = this.pi.getCommands();
+    this.rememberSnapshot({ state, messages, commands });
+    return this.getCachedSnapshot();
+  }
+
   async refreshCachedSnapshot(): Promise<SessionSnapshot> {
     const ctx = this.currentCtx();
     if (!ctx) {
       throw new Error("Live CLI session context is not available yet.");
     }
 
-    this.cwd = ctx.sessionManager.getCwd();
-    const { state, messages } = this.buildStateFromContext(ctx);
-    const commands = this.pi.getCommands();
-    this.rememberSnapshot({ state, messages, commands });
-    return this.getCachedSnapshot();
+    return this.refreshCachedSnapshotFromContext(ctx);
   }
 
   async getSnapshot(): Promise<SessionSnapshot> {
@@ -684,14 +681,11 @@ export class PhoneParentSessionWorker implements SessionController {
       if (type === "new_session") {
         const commandCtx = this.currentCommandCtx();
         if (!commandCtx) throw new Error(this.commandContextUnavailableMessage("new-session"));
-        const result = await this.withAutoConfirmedUi(commandCtx, () => commandCtx.newSession({
+        const result = await this.withAutoConfirmedUi(commandCtx, () => (commandCtx as any).newSession({
           ...(typeof command.parentSession === "string" && command.parentSession
             ? { parentSession: command.parentSession }
             : {}),
-          withSession: async (replacementCtx) => {
-            this.options.onReplacementContext?.(replacementCtx);
-            this.captureContext(replacementCtx, { emitSnapshot: true });
-          },
+          ...this.replacementOptions(),
         }));
         await this.refreshCachedSnapshot();
         this.emitSnapshot();
@@ -706,12 +700,7 @@ export class PhoneParentSessionWorker implements SessionController {
       if (type === "fork") {
         const commandCtx = this.currentCommandCtx();
         if (!commandCtx) throw new Error(this.commandContextUnavailableMessage("fork"));
-        const result = await commandCtx.fork(String(command.entryId || ""), {
-          withSession: async (replacementCtx) => {
-            this.options.onReplacementContext?.(replacementCtx);
-            this.captureContext(replacementCtx, { emitSnapshot: true });
-          },
-        });
+        const result = await (commandCtx as any).fork(String(command.entryId || ""), this.replacementOptions());
         await this.refreshCachedSnapshot();
         this.emitSnapshot();
         return this.buildResponse(id, type, true, { cancelled: result.cancelled });
@@ -809,10 +798,21 @@ export class PhoneParentSessionWorker implements SessionController {
     }
   }
 
+  private replacementOptions() {
+    return {
+      // Pi >= 0.73 invalidates the command context used to replace the session.
+      // Refresh our cached context from the replacement callback when available.
+      withSession: async (replacementCtx: ExtensionCommandContext) => {
+        this.options.onReplacementContext?.(replacementCtx);
+        this.captureContext(replacementCtx, { emitSnapshot: true });
+      },
+    } as any;
+  }
+
   captureContext(ctx: ExtensionContext | ExtensionCommandContext, options: { emitSnapshot?: boolean; emitCatalog?: boolean } = {}) {
     this.cwd = ctx.sessionManager.getCwd();
     this.touch();
-    void this.refreshCachedSnapshot()
+    Promise.resolve(this.refreshCachedSnapshotFromContext(ctx))
       .then(() => {
         if (options.emitSnapshot) {
           this.emitSnapshot();

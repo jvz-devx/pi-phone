@@ -109,6 +109,7 @@ export class PhoneServerRuntime {
   private parentWorker: PhoneParentSessionWorker | null = null;
   private latestCommandCtx: ExtensionCommandContext | null = null;
   private latestCommandCtxSessionKey: string | null = null;
+  private latestLiveSessionKey: string | null = null;
   private controlOwner: "cli" | "phone" = "cli";
   private phoneSelectedSessionId: string | null = null;
   private idleStopTimer: NodeJS.Timeout | null = null;
@@ -129,9 +130,10 @@ export class PhoneServerRuntime {
     let clearedCommandCtxError = false;
 
     this.latestCtx = ctx;
+    this.latestLiveSessionKey = this.sessionKeyForCtx(ctx);
     if (typeof (ctx as ExtensionCommandContext).waitForIdle === "function") {
       this.latestCommandCtx = ctx as ExtensionCommandContext;
-      this.latestCommandCtxSessionKey = ctx.sessionManager.getSessionFile() || ctx.sessionManager.getSessionId() || null;
+      this.latestCommandCtxSessionKey = this.latestLiveSessionKey;
       restoredCommandCtx = !hadCommandCtx;
       clearedCommandCtxError = Boolean(this.parentWorker?.clearCommandContextUnavailableError());
     }
@@ -142,6 +144,10 @@ export class PhoneServerRuntime {
     }
 
     return restoredCommandCtx;
+  }
+
+  private sessionKeyForCtx(ctx?: ExtensionContext | ExtensionCommandContext | null) {
+    return ctx?.sessionManager.getSessionFile() || ctx?.sessionManager.getSessionId() || null;
   }
 
   private captureReplacementCtx(ctx: ExtensionCommandContext) {
@@ -161,7 +167,7 @@ export class PhoneServerRuntime {
     // session_start only provides ExtensionContext on affected Pi versions. For
     // new/resume/fork, keep a freshly captured withSession ctx only when it points at
     // the new session (start) or no longer points at the shutting-down session.
-    const eventSessionKey = ctx?.sessionManager.getSessionFile() || ctx?.sessionManager.getSessionId() || null;
+    const eventSessionKey = this.sessionKeyForCtx(ctx);
     const hadCommandCtx = Boolean(this.latestCommandCtx);
     const hasFreshReplacementCtx = Boolean(
       reason !== "reload"
@@ -548,6 +554,25 @@ export class PhoneServerRuntime {
     this.releaseParentOwnershipIfAvailable();
   }
 
+  private tokenFromRequest(req: IncomingMessage, url: URL) {
+    const header = req.headers.authorization || "";
+    const bearer = header.match(/^Bearer\s+(.+)$/i)?.[1] || "";
+    return url.searchParams.get("token") || bearer;
+  }
+
+  private isApiAuthorized(req: IncomingMessage, url: URL) {
+    return !this.config.token || this.tokenFromRequest(req, url) === this.config.token;
+  }
+
+  private buildPublicHealth() {
+    return {
+      hasToken: Boolean(this.config.token),
+      isRunning: Boolean(this.server),
+      host: this.config.host,
+      port: this.config.port,
+    };
+  }
+
   private async handleHttp(req: IncomingMessage, res: ServerResponse) {
     this.markActivity();
     const url = new URL(req.url || "/", `http://${req.headers.host || "localhost"}`);
@@ -584,11 +609,19 @@ export class PhoneServerRuntime {
         "Content-Type": "application/json; charset=utf-8",
         "Cache-Control": "no-store",
       });
-      res.end(JSON.stringify(this.buildStatus()));
+      res.end(JSON.stringify(this.isApiAuthorized(req, url)
+        ? this.buildStatus()
+        : this.buildPublicHealth()));
       return;
     }
 
     if (url.pathname === "/api/quota") {
+      if (!this.isApiAuthorized(req, url)) {
+        res.writeHead(403, { "Content-Type": "application/json; charset=utf-8" });
+        res.end(JSON.stringify({ error: "Forbidden" }));
+        return;
+      }
+
       if (req.method !== "GET" && req.method !== "HEAD") {
         res.writeHead(405, { "Content-Type": "application/json; charset=utf-8" });
         res.end(JSON.stringify({ error: "Method not allowed" }));
@@ -1328,11 +1361,16 @@ export class PhoneServerRuntime {
   async handleSessionShutdown(event: unknown, ctx: ExtensionContext) {
     const reason = sessionShutdownReason(event);
     if (reason === "new" || reason === "resume" || reason === "fork" || reason === "reload") {
+      const shutdownSessionKey = this.sessionKeyForCtx(ctx);
       const hasFreshReplacementCtx = this.clearCommandCtxForReplacement(reason, ctx, "shutdown");
-      // A replacement command context may already have been captured via withSession
-      // before Pi emits shutdown for the old session. Do not let that stale
-      // ExtensionContext become latestCtx again, or parent controls/snapshots can
-      // regress to the old session and appear unavailable.
+      // A replacement/reload context may already be live when Pi emits shutdown
+      // for the old session. Do not let that stale ExtensionContext become
+      // latestCtx again, or parent controls/snapshots can regress to the old
+      // session and appear unavailable.
+      if (shutdownSessionKey && this.latestLiveSessionKey && shutdownSessionKey !== this.latestLiveSessionKey) {
+        this.broadcastStatus();
+        return;
+      }
       if (!hasFreshReplacementCtx) {
         this.captureCtx(ctx);
         this.syncCwdFromCtx(ctx);

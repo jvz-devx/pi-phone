@@ -63,6 +63,8 @@ export async function refreshQuota({ force = false } = {}) {
     url.searchParams.set("modelId", currentModel.modelId);
     if (force) url.searchParams.set("force", "1");
 
+    if (state.token) url.searchParams.set("token", state.token);
+
     const response = await fetch(url, { cache: "no-store" });
     if (!response.ok) throw new Error(`Quota request failed (${response.status})`);
 
@@ -152,7 +154,9 @@ export function connectSocket({ handleEnvelope, handleAuthFailure }) {
 }
 
 export async function loadHealth() {
-  const response = await fetch("/api/health", { cache: "no-store" });
+  const url = new URL("/api/health", window.location.origin);
+  if (state.token) url.searchParams.set("token", state.token);
+  const response = await fetch(url, { cache: "no-store" });
   if (!response.ok) throw new Error(`Health check failed (${response.status})`);
   state.health = await response.json();
   state.status = state.health;

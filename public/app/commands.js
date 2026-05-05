@@ -148,12 +148,10 @@ export function tryHandleLocalCommand(text, { hasAttachments = false } = {}) {
   }
 
   if (name === "new") {
-    sendRpc({ type: "new_session" });
-    return "handled";
+    return sendRpc({ type: "new_session" }) ? "handled" : "blocked";
   }
   if (name === "compact") {
-    sendRpc({ type: "compact" });
-    return "handled";
+    return sendRpc({ type: "compact" }) ? "handled" : "blocked";
   }
   if (name === "reload") {
     return requestReload() ? "handled" : "blocked";
@@ -164,8 +162,7 @@ export function tryHandleLocalCommand(text, { hasAttachments = false } = {}) {
   }
   if (name === "stats" || name === "cost") {
     openSheet("actions");
-    sendRpc({ type: "get_session_stats" });
-    return "handled";
+    return sendRpc({ type: "get_session_stats" }) ? "handled" : "blocked";
   }
   if (name === "commands") {
     openSheet("commands");
@@ -184,10 +181,9 @@ export function tryHandleLocalCommand(text, { hasAttachments = false } = {}) {
   }
   if (name === "thinking") {
     if (args && THINKING_LEVELS.includes(args)) {
-      sendRpc({ type: "set_thinking_level", level: args });
-    } else {
-      openSheet("thinking");
+      return sendRpc({ type: "set_thinking_level", level: args }) ? "handled" : "blocked";
     }
+    openSheet("thinking");
     return "handled";
   }
   if (name === "model") {
@@ -195,12 +191,11 @@ export function tryHandleLocalCommand(text, { hasAttachments = false } = {}) {
       const [provider, modelId] = args.includes("/") ? args.split("/", 2) : [null, args];
       const match = state.models.find((model) => (provider ? model.provider === provider && model.id === modelId : model.id === modelId || model.name === modelId));
       if (match) {
-        sendRpc({ type: "set_model", provider: match.provider, modelId: match.id });
-      } else {
-        openSheet("models");
-        sendRpc({ type: "get_available_models" });
-        showToast("Model not found locally. Pick one from the sheet.", "error");
+        return sendRpc({ type: "set_model", provider: match.provider, modelId: match.id }) ? "handled" : "blocked";
       }
+      openSheet("models");
+      sendRpc({ type: "get_available_models" });
+      showToast("Model not found locally. Pick one from the sheet.", "error");
     } else {
       openSheet("models");
       sendRpc({ type: "get_available_models" });
@@ -288,12 +283,13 @@ export async function submitPrompt({ steer = false } = {}) {
   }
 
   const streaming = Boolean(state.status?.isStreaming || state.snapshotState?.isStreaming);
-  sendRpc({
+  const sent = sendRpc({
     type: "prompt",
     message,
     ...(steer ? { streamingBehavior: "steer" } : streaming ? { streamingBehavior: "followUp" } : {}),
     ...(images.length ? { images } : {}),
   });
+  if (!sent) return;
 
   state.messages.push({
     id: `local-user-${Date.now()}`,
@@ -339,16 +335,25 @@ export function prepareSessionSelection(sessionId) {
   return true;
 }
 
+export function parentCommandControlsAvailable() {
+  const parentSession = state.activeSessions.find((session) => session.kind === "parent");
+  const activeParentUnavailable = parentSession?.commandContextAvailable === false;
+  const selectedParentUnavailable = state.status?.sessionKind === "parent" && state.status?.commandContextAvailable === false;
+  return !(activeParentUnavailable || selectedParentUnavailable);
+}
+
 export function prepareParentSessionNew() {
   if (state.socket?.readyState !== WebSocket.OPEN) {
     showToast("Not connected to Pi.", "error");
     return false;
   }
+  if (!parentCommandControlsAvailable()) {
+    showToast("New Parent is unavailable until Pi provides a fresh command context.", "error");
+    refreshAll();
+    return false;
+  }
 
-  clearSnapshotView();
   setFollowLatest(true);
-  renderHeader();
-  renderMessages({ forceScroll: true });
   showToast("Starting new parent session…");
   state.socket.send(JSON.stringify({ kind: "session-parent-new" }));
   return true;

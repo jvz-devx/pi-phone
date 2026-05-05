@@ -24,7 +24,7 @@ A phone-first remote UI for [Pi](https://pi.dev) that lets you drive a real Pi s
 ## Requirements
 
 - Pi installed and working
-- Compatible with Pi `0.58.4` and newer Pi `0.73.x` session lifecycle events
+- Compatible with `@mariozechner/pi-coding-agent` `>=0.58.4 <1.0.0` (including newer Pi `0.73.x` session lifecycle events)
 - Node.js available for extension dependencies
 - Optional but strongly recommended: Tailscale installed and logged in if you want easy remote phone access
 
