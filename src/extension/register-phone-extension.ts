@@ -90,7 +90,7 @@ export default function registerPhoneExtension(pi: ExtensionAPI) {
   state.registeredApis.add(pi);
 
   pi.registerCommand("phone-start", {
-    description: "Start the phone web UI. Usage: /phone-start [port] [token] [--cwd path] [--host 127.0.0.1] [--idle-mins 20]",
+    description: "Start the phone web UI. Usage: /phone-start [port] [token] [--cwd path] [--host 127.0.0.1] [--idle-mins 20]. Token '-' is loopback-only; use a token for remote access.",
     handler: async (args, ctx) => {
       await runtime.handlePhoneStart(args, ctx);
     },

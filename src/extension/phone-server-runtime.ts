@@ -9,6 +9,7 @@ import { randomBytes } from "node:crypto";
 import { existsSync, realpathSync, statSync } from "node:fs";
 import { readFile } from "node:fs/promises";
 import { createServer, type IncomingMessage, type Server, type ServerResponse } from "node:http";
+import { isIP } from "node:net";
 import { createRequire } from "node:module";
 import { delimiter, dirname, extname, join, resolve } from "node:path";
 import type { RawData, WebSocket, WebSocketServer } from "ws";
@@ -686,16 +687,38 @@ export class PhoneServerRuntime {
   }
 
   private hostNameFromHeader(host: string) {
+    const trimmed = host.trim();
+    if (!trimmed) return null;
+
     try {
-      return new URL(`http://${host}`).hostname;
+      const parsed = new URL(`http://${trimmed}`);
+      if (!parsed.hostname || parsed.username || parsed.password) return null;
+      return parsed.hostname;
     } catch {
-      return host.split(":")[0] || host;
+      return null;
     }
   }
 
-  private isLocalRequestHost(host: string) {
-    const hostname = this.hostNameFromHeader(host).toLowerCase();
-    return hostname === "localhost" || isLoopbackAddress(hostname);
+  private normalizeHostname(hostname: string) {
+    return hostname.trim().toLowerCase().replace(/^\[(.*)\]$/, "$1");
+  }
+
+  private isLoopbackOrLocalhostName(hostname: string) {
+    const normalized = this.normalizeHostname(hostname);
+    if (normalized === "localhost" || isLoopbackAddress(normalized)) return true;
+
+    if (isIP(normalized) === 4) {
+      return normalized.startsWith("127.");
+    }
+
+    const ipv4Mapped = normalized.match(/^::ffff:(\d+\.\d+\.\d+\.\d+)$/i)?.[1];
+    return Boolean(ipv4Mapped?.startsWith("127."));
+  }
+
+  private isLocalRequestHost(host: string | undefined) {
+    if (!host) return false;
+    const hostname = this.hostNameFromHeader(host);
+    return Boolean(hostname && this.isLoopbackOrLocalhostName(hostname));
   }
 
   private expectedOriginProtocol(req: IncomingMessage): "http:" | "https:" {
@@ -713,7 +736,7 @@ export class PhoneServerRuntime {
 
   private isAllowedWebSocketOrigin(req: IncomingMessage) {
     const origin = req.headers.origin;
-    if (!origin) return true;
+    if (!origin) return Boolean(this.config.token);
 
     let parsedOrigin: URL;
     try {
@@ -732,6 +755,10 @@ export class PhoneServerRuntime {
 
     const expectedProtocol = this.expectedOriginProtocol(req);
     if (this.normalizeOriginHost(parsedOrigin.host, originProtocol) !== this.normalizeOriginHost(requestHost, expectedProtocol)) {
+      return false;
+    }
+
+    if (!this.config.token && (!this.isLoopbackOrLocalhostName(parsedOrigin.hostname) || !this.isLocalRequestHost(requestHost))) {
       return false;
     }
 
@@ -762,6 +789,12 @@ export class PhoneServerRuntime {
   }
 
   private async handleHttp(req: IncomingMessage, res: ServerResponse) {
+    if (!this.config.token && !this.isLocalRequestHost(req.headers.host)) {
+      res.writeHead(403, { "Content-Type": "application/json; charset=utf-8" });
+      res.end(JSON.stringify({ error: "Forbidden" }));
+      return;
+    }
+
     const url = new URL(req.url || "/", `http://${req.headers.host || "localhost"}`);
 
     if (url.pathname === phoneControlStopPath) {
@@ -1551,6 +1584,11 @@ export class PhoneServerRuntime {
 
     if (!nextConfig.token && !parsed.tokenSpecified) {
       nextConfig.token = this.generateToken();
+    }
+
+    if (!nextConfig.token && !this.isLoopbackOrLocalhostName(nextConfig.host)) {
+      ctx.ui.notify("Refusing to start Pi Phone without a token on a non-loopback host. Use a token, or bind to 127.0.0.1/localhost for local development.", "warning");
+      return;
     }
 
     const changed = ["host", "port", "token", "cwd", "idleTimeoutMs"].some(

@@ -151,11 +151,13 @@ Behavior:
 - auto-generates a random token if you do not provide one
 - tries to auto-configure Tailscale Serve
 
-Use `-` to explicitly disable the token:
+Use `-` to explicitly disable the token for loopback-only local development:
 
 ```text
 /phone-start 8787 -
 ```
+
+Token-disabled mode is refused on non-loopback hosts such as `0.0.0.0`. Without a token, all HTTP static/API requests must use a loopback/`localhost` `Host`, and browser WebSocket connections must also include a valid loopback/`localhost` `Origin`. Missing or invalid WebSocket origins are rejected in token-disabled mode, which protects tokenless local development from DNS-rebinding attacks. Use a token for LAN, Tailscale, or other remote access.
 
 ### `/phone`
 
