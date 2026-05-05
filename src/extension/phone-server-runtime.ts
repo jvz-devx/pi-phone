@@ -391,6 +391,11 @@ export class PhoneServerRuntime {
         return;
       }
 
+      if (this.sessionPool?.hasActiveSessionsForIdleStop()) {
+        this.scheduleIdleStop();
+        return;
+      }
+
       const idlePayload = {
         channel: "server",
         event: "idle-timeout",
@@ -679,7 +684,6 @@ export class PhoneServerRuntime {
   }
 
   private async handleHttp(req: IncomingMessage, res: ServerResponse) {
-    this.markActivity();
     const url = new URL(req.url || "/", `http://${req.headers.host || "localhost"}`);
 
     if (url.pathname === phoneControlStopPath) {
@@ -695,6 +699,7 @@ export class PhoneServerRuntime {
         return;
       }
 
+      this.markActivity();
       res.writeHead(200, {
         "Content-Type": "application/json; charset=utf-8",
         "Cache-Control": "no-store",
@@ -710,11 +715,13 @@ export class PhoneServerRuntime {
     }
 
     if (url.pathname === "/api/health") {
+      const authorized = this.isApiAuthorized(req, url);
+      if (authorized) this.markActivity();
       res.writeHead(200, {
         "Content-Type": "application/json; charset=utf-8",
         "Cache-Control": "no-store",
       });
-      res.end(JSON.stringify(this.isApiAuthorized(req, url)
+      res.end(JSON.stringify(authorized
         ? this.buildStatus()
         : this.buildPublicHealth()));
       return;
@@ -733,6 +740,7 @@ export class PhoneServerRuntime {
         return;
       }
 
+      this.markActivity();
       const quota = await getQuotaForModel(url.searchParams.get("provider"), url.searchParams.get("modelId"));
       res.writeHead(200, {
         "Content-Type": "application/json; charset=utf-8",
@@ -762,6 +770,7 @@ export class PhoneServerRuntime {
 
     try {
       const body = await readFile(filePath);
+      if (this.isApiAuthorized(req, url)) this.markActivity();
       const extension = extname(filePath);
       const cacheControl = [".html", ".js", ".css", ".webmanifest", ".json"].includes(extension) || pathname === "/sw.js"
         ? "no-store"
@@ -775,6 +784,7 @@ export class PhoneServerRuntime {
     } catch {
       try {
         const body = await readFile(publicFilePath("index.html"));
+        if (this.isApiAuthorized(req, url)) this.markActivity();
         res.writeHead(200, {
           "Content-Type": "text/html; charset=utf-8",
           "Cache-Control": "no-store",
@@ -1016,6 +1026,10 @@ export class PhoneServerRuntime {
       throw new Error("Pi Phone session pool is not running.");
     }
 
+    if (!this.sessionPool.hasClient(ws)) {
+      return;
+    }
+
     if (message.kind === "refresh") {
       await this.sessionPool.refreshActiveSnapshot(ws);
       return;
@@ -1255,6 +1269,21 @@ export class PhoneServerRuntime {
     if (command.type === "phone_open_branch_path") {
       const nextPath = await this.createBranchSessionFromEntryForWorker(worker, String(command.entryId || ""));
       const switchResponse = await worker.request({ type: "switch_session", sessionPath: nextPath });
+      if (!switchResponse?.success) {
+        this.send(ws, {
+          channel: "rpc",
+          payload: {
+            type: "response",
+            command: "phone_open_branch_path",
+            success: false,
+            error: switchResponse?.error || "Failed to switch to branch session.",
+            data: { path: nextPath, switchResult: switchResponse?.data },
+            ...(command.id ? { id: command.id } : {}),
+          },
+        });
+        return;
+      }
+
       this.send(ws, {
         channel: "rpc",
         payload: {

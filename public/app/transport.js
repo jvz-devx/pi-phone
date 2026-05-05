@@ -164,15 +164,27 @@ export async function loadHealth() {
 }
 
 export async function boot({ handleEnvelope, handleAuthFailure }) {
+  const bootOptions = { handleEnvelope, handleAuthFailure };
+
   try {
     await loadHealth();
   } catch (error) {
     showBanner(error instanceof Error ? error.message : "Failed to reach server.", "error");
+    if (!state.manuallyClosed) {
+      clearReconnectTimer();
+      state.reconnectTimer = setTimeout(() => boot(bootOptions), 1800);
+    }
     return;
   }
 
+  clearReconnectTimer();
+  const authenticatedHealth = Boolean(state.health?.cwd);
+  if (state.health?.hasToken && state.token && !authenticatedHealth) {
+    handleAuthFailure();
+    return;
+  }
   if (state.health?.hasToken && !state.token) openTokenModal();
-  else connectSocket({ handleEnvelope, handleAuthFailure });
+  else connectSocket(bootOptions);
 
   if ("serviceWorker" in navigator) {
     navigator.serviceWorker.register("/sw.js").catch(() => {});

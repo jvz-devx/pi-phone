@@ -81,6 +81,9 @@ export function initializeBindings({ handleEnvelope, handleAuthFailure }) {
   el.steerButton.addEventListener("click", () => submitPrompt({ steer: true }));
   el.sendButton.addEventListener("click", () => submitPrompt());
   el.sheetCloseButton.addEventListener("click", closeSheet);
+  el.sheetModal.addEventListener("click", (event) => {
+    if (event.target === el.sheetModal) closeSheet();
+  });
   el.sheetSavedSessionsButton?.addEventListener("click", () => openSheet("sessions"));
   el.attachImageButton.addEventListener("click", () => el.imageInput.click());
   el.imageInput.addEventListener("change", (event) => {
@@ -160,6 +163,11 @@ export function initializeBindings({ handleEnvelope, handleAuthFailure }) {
       event.preventDefault();
       el.tokenSaveButton.click();
     }
+  });
+
+  document.addEventListener("keydown", (event) => {
+    if (event.key !== "Escape") return;
+    if (!el.sheetModal.classList.contains("hidden")) closeSheet();
   });
 
   document.addEventListener("toggle", (event) => {

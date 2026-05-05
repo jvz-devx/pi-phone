@@ -31,11 +31,26 @@ function userContentDisplayText(content) {
   return contentToText(content);
 }
 
+function safeImageUrl(value) {
+  if (typeof value !== "string" || !value.trim()) return "";
+  const raw = value.trim();
+  try {
+    const url = new URL(raw, window.location.href);
+    if (["http:", "https:", "blob:"].includes(url.protocol)) return raw;
+    if (url.protocol === "data:" && /^data:image\/[a-z0-9.+-]+;base64,/i.test(raw)) return raw;
+  } catch {
+    return "";
+  }
+  return "";
+}
+
 function imageSource(part) {
   if (!part || part.type !== "image") return "";
-  if (typeof part.previewUrl === "string" && part.previewUrl) return part.previewUrl;
-  if (typeof part.url === "string" && part.url) return part.url;
-  if (typeof part.data === "string" && part.data && typeof part.mimeType === "string" && part.mimeType) {
+  const previewUrl = safeImageUrl(part.previewUrl);
+  if (previewUrl) return previewUrl;
+  const url = safeImageUrl(part.url);
+  if (url) return url;
+  if (typeof part.data === "string" && part.data && typeof part.mimeType === "string" && /^image\/[a-z0-9.+-]+$/i.test(part.mimeType)) {
     return `data:${escapeAttribute(part.mimeType)};base64,${escapeAttribute(part.data)}`;
   }
   return "";
@@ -68,7 +83,7 @@ function renderUserContent(content, fallbackText = "") {
     const alt = part.name || `Attached image ${imageIndex}`;
     blocks.push(`
       <div class="user-message-image-wrap">
-        <img class="user-message-image" src="${src}" alt="${escapeAttribute(alt)}" loading="lazy" />
+        <img class="user-message-image" src="${escapeAttribute(src)}" alt="${escapeAttribute(alt)}" loading="lazy" />
       </div>
     `);
   }

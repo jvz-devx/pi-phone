@@ -33,6 +33,10 @@ export class PhoneSessionPool {
     return [...this.clients.keys()];
   }
 
+  hasClient(ws: WebSocket) {
+    return this.clients.has(ws);
+  }
+
   getSelectedSessionId() {
     return this.defaultWorkerId;
   }
@@ -107,9 +111,7 @@ export class PhoneSessionPool {
   private async getWorkerForClient(ws: WebSocket) {
     const client = this.clients.get(ws);
     if (!client) {
-      const worker = await this.ensureDefaultWorker();
-      this.clients.set(ws, { activeSessionId: worker.id });
-      return worker;
+      throw new Error("Pi Phone client is no longer connected.");
     }
 
     const activeWorker = client.activeSessionId ? this.workers.get(client.activeSessionId) : null;
@@ -250,11 +252,40 @@ export class PhoneSessionPool {
   }
 
   async addClient(ws: WebSocket) {
-    const worker = await this.ensureDefaultWorker();
-    this.clients.set(ws, { activeSessionId: this.defaultWorkerId || worker.id });
+    if (!this.clients.has(ws)) {
+      this.clients.set(ws, { activeSessionId: null });
+    }
+
+    let worker: SessionController;
+    try {
+      worker = await this.ensureDefaultWorker();
+    } catch (error) {
+      this.removeClient(ws);
+      throw error;
+    }
+
+    const client = this.clients.get(ws);
+    if (!client || ws.readyState !== ws.OPEN) {
+      return;
+    }
+
+    client.activeSessionId = this.defaultWorkerId || worker.id;
     this.sendStatus(ws, { force: true });
     this.sendCatalog(ws, { force: true });
     await this.refreshActiveSnapshot(ws);
+  }
+
+  hasActiveSessionsForIdleStop() {
+    const hasConnectedClient = this.clients.size > 0;
+    return this.getSessions().some((worker) => {
+      const summary = worker.getSummary();
+      return Boolean(
+        summary.isStreaming
+        || summary.isCompacting
+        || (hasConnectedClient && (summary.hasPendingUiRequest || worker.pendingUiRequest))
+        || summary.pendingMessageCount > 0,
+      );
+    });
   }
 
   removeClient(ws: WebSocket) {
@@ -307,10 +338,9 @@ export class PhoneSessionPool {
 
     const client = this.clients.get(ws);
     if (!client) {
-      this.clients.set(ws, { activeSessionId: sessionId });
-    } else {
-      client.activeSessionId = sessionId;
+      throw new Error("Pi Phone client is no longer connected.");
     }
+    client.activeSessionId = sessionId;
 
     this.defaultWorkerId = worker.id;
 
@@ -330,11 +360,10 @@ export class PhoneSessionPool {
       added = true;
       this.defaultWorkerId = worker.id;
 
-      if (existingClient) {
-        existingClient.activeSessionId = worker.id;
-      } else {
-        this.clients.set(ws, { activeSessionId: worker.id });
+      if (!existingClient) {
+        throw new Error("Pi Phone client is no longer connected.");
       }
+      existingClient.activeSessionId = worker.id;
 
       this.sendCatalog(ws, { force: true });
       this.sendStatus(ws, { force: true });

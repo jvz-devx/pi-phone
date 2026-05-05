@@ -3,13 +3,13 @@
   "version": "0.0.13",
   "description": "Phone-first remote UI extension for Pi with Tailscale-friendly access",
   "type": "module",
-  "homepage": "https://github.com/MaliNamNam/pi-phone#readme",
+  "homepage": "https://github.com/jvz-devx/pi-phone#readme",
   "repository": {
     "type": "git",
-    "url": "git+https://github.com/MaliNamNam/pi-phone.git"
+    "url": "git+https://github.com/jvz-devx/pi-phone.git"
   },
   "bugs": {
-    "url": "https://github.com/MaliNamNam/pi-phone/issues"
+    "url": "https://github.com/jvz-devx/pi-phone/issues"
   },
   "keywords": [
     "pi-package",
@@ -46,6 +46,11 @@
   ],
   "peerDependencies": {
     "@mariozechner/pi-coding-agent": ">=0.58.4 <1.0.0"
+  },
+  "peerDependenciesMeta": {
+    "@mariozechner/pi-coding-agent": {
+      "optional": true
+    }
   },
   "devDependencies": {
     "@mariozechner/pi-ai": "^0.73.0",

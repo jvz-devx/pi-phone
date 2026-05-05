@@ -11,7 +11,7 @@ import {
 import { el, state } from "./state.js";
 import { closeSheet, openSheet } from "./sheet-navigation.js";
 import { refreshAll, sendRpc } from "./transport.js";
-import { autoResizeTextarea } from "./ui.js";
+import { autoResizeTextarea, showToast } from "./ui.js";
 
 export function sheetButtonActionKey(button) {
   return [

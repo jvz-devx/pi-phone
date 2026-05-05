@@ -61,7 +61,7 @@ self.addEventListener("fetch", (event) => {
   if (useNetworkFirst) {
     event.respondWith(
       updateCache(request).catch(async () => {
-        const cached = await caches.match(request);
+        const cached = await caches.match(request, { ignoreSearch: APP_SHELL.has(url.pathname) });
         if (cached) return cached;
         return caches.match("/");
       }),

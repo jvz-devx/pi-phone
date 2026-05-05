@@ -811,14 +811,11 @@ export class PhoneParentSessionWorker implements SessionController {
 
   captureContext(ctx: ExtensionContext | ExtensionCommandContext, options: { emitSnapshot?: boolean; emitCatalog?: boolean } = {}) {
     this.cwd = ctx.sessionManager.getCwd();
-    this.touch();
     Promise.resolve(this.refreshCachedSnapshotFromContext(ctx))
       .then(() => {
+        this.touch();
         if (options.emitSnapshot) {
           this.emitSnapshot();
-        }
-        if (options.emitCatalog) {
-          this.options.onStateChange();
         }
       })
       .catch((error) => {

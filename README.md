@@ -19,7 +19,7 @@ A phone-first remote UI for [Pi](https://pi.dev) that lets you drive a real Pi s
 
 ## Screenshot
 
-![pi-phone mobile UI screenshot](https://raw.githubusercontent.com/MaliNamNam/pi-phone/master/docs/images/pi-phone-screenshot.png)
+![pi-phone mobile UI screenshot](https://raw.githubusercontent.com/jvz-devx/pi-phone/master/docs/images/pi-phone-screenshot.png)
 
 ## Requirements
 

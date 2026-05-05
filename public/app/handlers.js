@@ -28,14 +28,17 @@ import { renderAutocompleteItems } from "./autocomplete.js";
 export function handleAuthFailure() {
   resetToken({ clearInput: true });
   state.socket = null;
+  closeSheet();
+  clearUiModal();
   renderHeader();
   openTokenModal();
   showBanner("Access token required. Enter the current /phone-start token.", "error");
 }
 
 function sendUiResponse(payload) {
-  sendRpc({ type: "extension_ui_response", ...payload });
-  clearUiModal();
+  if (sendRpc({ type: "extension_ui_response", ...payload })) {
+    clearUiModal();
+  }
 }
 
 function handleExtensionUiRequest(request) {
