@@ -220,6 +220,11 @@ export class PhoneServerRuntime {
   private idleStopTimer: NodeJS.Timeout | null = null;
   private lastActivityAt = Date.now();
   private runtimeControlToken = "";
+  private stopping = false;
+  private lifecycleGeneration = 0;
+  private startPromise: Promise<void> | null = null;
+  private stopPromise: Promise<void> | null = null;
+  private lifecycleCommandQueue: Promise<void> = Promise.resolve();
   private activeRuntimeStatePath: string | null = null;
 
   constructor(private pi: ExtensionAPI) {}
@@ -674,6 +679,79 @@ export class PhoneServerRuntime {
     return !this.config.token || this.tokenFromRequest(req, url) === this.config.token;
   }
 
+  private normalizeOriginHost(host: string, protocol: "http:" | "https:") {
+    const normalized = host.toLowerCase();
+    if (protocol === "http:") return normalized.replace(/:80$/, "");
+    return normalized.replace(/:443$/, "");
+  }
+
+  private hostNameFromHeader(host: string) {
+    try {
+      return new URL(`http://${host}`).hostname;
+    } catch {
+      return host.split(":")[0] || host;
+    }
+  }
+
+  private isLocalRequestHost(host: string) {
+    const hostname = this.hostNameFromHeader(host).toLowerCase();
+    return hostname === "localhost" || isLoopbackAddress(hostname);
+  }
+
+  private expectedOriginProtocol(req: IncomingMessage): "http:" | "https:" {
+    const forwardedProtoHeader = req.headers["x-forwarded-proto"];
+    const forwardedProto = (Array.isArray(forwardedProtoHeader) ? forwardedProtoHeader[0] : forwardedProtoHeader || "")
+      .split(",")[0]
+      .trim()
+      .toLowerCase();
+
+    if (forwardedProto === "https" || forwardedProto === "wss") return "https:";
+    if (forwardedProto === "http" || forwardedProto === "ws") return "http:";
+
+    return (req.socket as typeof req.socket & { encrypted?: boolean }).encrypted ? "https:" : "http:";
+  }
+
+  private isAllowedWebSocketOrigin(req: IncomingMessage) {
+    const origin = req.headers.origin;
+    if (!origin) return true;
+
+    let parsedOrigin: URL;
+    try {
+      parsedOrigin = new URL(origin);
+    } catch {
+      return false;
+    }
+
+    if (parsedOrigin.protocol !== "http:" && parsedOrigin.protocol !== "https:") {
+      return false;
+    }
+    const originProtocol = parsedOrigin.protocol as "http:" | "https:";
+
+    const requestHost = req.headers.host;
+    if (!requestHost) return false;
+
+    const expectedProtocol = this.expectedOriginProtocol(req);
+    if (this.normalizeOriginHost(parsedOrigin.host, originProtocol) !== this.normalizeOriginHost(requestHost, expectedProtocol)) {
+      return false;
+    }
+
+    if (originProtocol === expectedProtocol) return true;
+
+    // Tailscale Serve and similar TLS-terminating proxies may forward to this
+    // plaintext HTTP server without preserving X-Forwarded-Proto. Keep those
+    // same-host HTTPS origins working, but do not relax localhost/plain HTTP.
+    return expectedProtocol === "http:" && originProtocol === "https:" && !this.isLocalRequestHost(requestHost);
+  }
+
+  private rejectUpgrade(socket: { write: (buffer: string) => void; destroy: () => void }, statusCode: number, reason: string) {
+    try {
+      socket.write(`HTTP/1.1 ${statusCode} ${reason}\r\nConnection: close\r\nContent-Length: 0\r\n\r\n`);
+    } catch {
+      // ignore
+    }
+    socket.destroy();
+  }
+
   private buildPublicHealth() {
     return {
       hasToken: Boolean(this.config.token),
@@ -706,7 +784,7 @@ export class PhoneServerRuntime {
       });
       res.end(JSON.stringify({ ok: true }));
       setTimeout(() => {
-        this.stopServer().catch((error) => {
+        this.enqueueLifecycleCommand(() => this.stopServer()).catch((error) => {
           this.latestError = error instanceof Error ? error.message : String(error);
           this.broadcastStatus();
         });
@@ -798,7 +876,34 @@ export class PhoneServerRuntime {
   }
 
   async startServer() {
+    if (this.startPromise) {
+      return this.startPromise;
+    }
+    if (!this.stopPromise && this.server) return;
+
+    const generation = this.lifecycleGeneration;
+    this.startPromise = this.startServerOnce(generation).finally(() => {
+      this.startPromise = null;
+    });
+    return this.startPromise;
+  }
+
+  private assertStartCurrent(generation: number) {
+    if (this.stopping || generation !== this.lifecycleGeneration) {
+      throw new Error("Pi Phone startup was cancelled by a stop request.");
+    }
+  }
+
+  private async startServerOnce(generation: number) {
+    if (this.stopPromise) {
+      await this.stopPromise;
+    }
+    this.assertStartCurrent(generation);
     if (this.server) return;
+
+    const { WebSocketServer } = await loadWsModule();
+    this.assertStartCurrent(generation);
+    this.stopping = false;
 
     this.sessionPool = new PhoneSessionPool({
       cwd: this.config.cwd,
@@ -883,11 +988,16 @@ export class PhoneServerRuntime {
       });
     });
 
-    const { WebSocketServer } = await loadWsModule();
     this.wss = new WebSocketServer({ noServer: true });
 
     this.wss.on("connection", (ws: WebSocket) => {
-      if (this.sessionPool && this.sessionPool.clientCount > 0) {
+      if (this.stopping || !this.sessionPool) {
+        ws.close(1001, "server-stopping");
+        ws.terminate();
+        return;
+      }
+
+      if (this.sessionPool.clientCount > 0) {
         this.sessionPool.closeAllClients({
           payload: {
             channel: "server",
@@ -930,22 +1040,44 @@ export class PhoneServerRuntime {
       });
     });
 
+    this.assertStartCurrent(generation);
+
     this.server.on("upgrade", (req, socket, head) => {
       const url = new URL(req.url || "/", `http://${req.headers.host || "localhost"}`);
-      if (url.pathname !== "/ws") {
-        socket.destroy();
+      if (this.stopping) {
+        this.rejectUpgrade(socket, 503, "Service Unavailable");
         return;
       }
 
-      const tokenMismatch = Boolean(this.config.token && url.searchParams.get("token") !== this.config.token);
+      if (url.pathname !== "/ws") {
+        this.rejectUpgrade(socket, 404, "Not Found");
+        return;
+      }
 
-      this.wss?.handleUpgrade(req, socket, head, (ws) => {
-        if (tokenMismatch) {
-          ws.close(1008, "invalid-token");
+      if (!this.isAllowedWebSocketOrigin(req)) {
+        this.rejectUpgrade(socket, 403, "Forbidden");
+        return;
+      }
+
+      if (this.config.token && url.searchParams.get("token") !== this.config.token) {
+        this.rejectUpgrade(socket, 401, "Unauthorized");
+        return;
+      }
+
+      const activeWss = this.wss;
+      if (!activeWss) {
+        this.rejectUpgrade(socket, 503, "Service Unavailable");
+        return;
+      }
+
+      activeWss.handleUpgrade(req, socket, head, (ws) => {
+        if (this.stopping || this.wss !== activeWss) {
+          ws.close(1001, "server-stopping");
+          ws.terminate();
           return;
         }
 
-        this.wss?.emit("connection", ws, req);
+        activeWss.emit("connection", ws, req);
       });
     });
 
@@ -954,17 +1086,20 @@ export class PhoneServerRuntime {
         this.server?.once("error", rejectPromise);
         this.server?.listen(this.config.port, this.config.host, () => resolvePromise());
       });
+      this.assertStartCurrent(generation);
 
       this.latestError = "";
       this.runtimeControlToken = this.generateToken();
       this.markActivity();
       await this.sessionPool.ensureDefaultWorker();
+      this.assertStartCurrent(generation);
       this.activeRuntimeStatePath = await writePersistedRuntimeState(this.config.host, this.config.port, this.runtimeControlToken);
+      this.assertStartCurrent(generation);
       this.broadcastStatus();
       this.syncStatusUi();
     } catch (error) {
       const message = error instanceof Error ? error.message : String(error);
-      await this.stopServer();
+      await this.closeCurrentServerResources();
       this.latestError = message;
       this.broadcastStatus();
       this.syncStatusUi();
@@ -973,44 +1108,90 @@ export class PhoneServerRuntime {
   }
 
   async stopServer() {
-    this.clearIdleStopTimer();
-
-    const runtimeStatePath = this.activeRuntimeStatePath;
-    this.runtimeControlToken = "";
-
-    if (this.sessionPool) {
-      await this.sessionPool.dispose();
-      this.sessionPool = null;
+    if (this.stopPromise) {
+      if (this.startPromise) {
+        this.stopping = true;
+        this.lifecycleGeneration += 1;
+      }
+      return this.stopPromise;
     }
-    this.parentWorker = null;
+
+    this.stopPromise = this.stopServerOnce().finally(() => {
+      this.stopPromise = null;
+    });
+    return this.stopPromise;
+  }
+
+  private async stopServerOnce() {
+    this.clearIdleStopTimer();
+    this.stopping = true;
+    this.lifecycleGeneration += 1;
+
+    const starting = this.startPromise;
+    if (starting) {
+      await starting.catch(() => {});
+    }
+
+    await this.closeCurrentServerResources();
+
+    this.latestError = "";
+    this.stopping = false;
+    this.broadcastStatus();
+    this.syncStatusUi();
+  }
+
+  private async closeCurrentServerResources() {
+    const runtimeStatePath = this.activeRuntimeStatePath;
+    const runningServer = this.server;
+    const runningWss = this.wss;
+    const runningSessionPool = this.sessionPool;
+    const runningParentWorker = this.parentWorker;
+
+    this.runtimeControlToken = "";
     this.controlOwner = "cli";
     this.phoneSelectedSessionId = null;
 
-    if (this.wss) {
-      const runningWss = this.wss;
-      await new Promise<void>((resolvePromise) => {
-        runningWss.close(() => resolvePromise());
-      });
-      this.wss = null;
-    }
+    const closeServerPromise = runningServer
+      ? new Promise<void>((resolvePromise) => {
+        try {
+          runningServer.removeAllListeners("upgrade");
+          runningServer.close(() => resolvePromise());
+          runningServer.closeIdleConnections?.();
+          runningServer.closeAllConnections?.();
+        } catch {
+          resolvePromise();
+        }
+      })
+      : Promise.resolve();
 
-    if (this.server) {
-      const runningServer = this.server;
+    if (runningWss) {
+      for (const client of runningWss.clients) {
+        try {
+          client.close(1001, "server-stopping");
+          client.terminate();
+        } catch {
+          // ignore
+        }
+      }
       await new Promise<void>((resolvePromise) => {
         try {
-          runningServer.close(() => resolvePromise());
+          runningWss.close(() => resolvePromise());
         } catch {
           resolvePromise();
         }
       });
-      this.server = null;
     }
 
+    await runningSessionPool?.dispose();
+    await closeServerPromise;
+
+    if (this.server === runningServer) this.server = null;
+    if (this.wss === runningWss) this.wss = null;
+    if (this.sessionPool === runningSessionPool) this.sessionPool = null;
+    if (this.parentWorker === runningParentWorker) this.parentWorker = null;
+
     await removePersistedRuntimeState(runtimeStatePath);
-    this.activeRuntimeStatePath = null;
-    this.latestError = "";
-    this.broadcastStatus();
-    this.syncStatusUi();
+    if (this.activeRuntimeStatePath === runtimeStatePath) this.activeRuntimeStatePath = null;
   }
 
   private async handleClientMessage(ws: WebSocket, raw: string) {
@@ -1330,7 +1511,25 @@ export class PhoneServerRuntime {
 
   async handlePhoneStart(args: string | undefined, ctx: ExtensionCommandContext) {
     this.captureCtx(ctx);
+    return this.enqueueLifecycleCommand(() => this.handlePhoneStartOnce(args, ctx));
+  }
+
+  private enqueueLifecycleCommand<T>(operation: () => Promise<T>) {
+    const queued = this.lifecycleCommandQueue.catch(() => {}).then(operation);
+    this.lifecycleCommandQueue = queued.then(() => {}, () => {});
+    return queued;
+  }
+
+  private isStartPostWorkCurrent(generation: number) {
+    return !this.stopping && generation === this.lifecycleGeneration && Boolean(this.server);
+  }
+
+  private async handlePhoneStartOnce(args: string | undefined, ctx: ExtensionCommandContext) {
+    this.captureCtx(ctx);
     this.config.cwd = this.activeCwd();
+    if (this.stopPromise) {
+      await this.stopPromise;
+    }
     const parsed = parsePhoneStartArgs(args, this.config);
     const nextConfig = parsed.config;
 
@@ -1368,8 +1567,18 @@ export class PhoneServerRuntime {
       }
     }
 
+    const postStartGeneration = this.lifecycleGeneration;
+    if (!this.isStartPostWorkCurrent(postStartGeneration)) return;
+
     await this.sessionPool?.ensureDefaultWorker();
+    if (!this.isStartPostWorkCurrent(postStartGeneration)) return;
+
     const tailscale = await enableTailscaleServe(this.pi, this.config.port);
+    if (!this.isStartPostWorkCurrent(postStartGeneration)) {
+      await disableMatchingTailscaleServe(this.pi, this.config.port);
+      return;
+    }
+
     this.updateStatusUi(ctx);
     ctx.ui.notify(this.statusText(), "info");
     if (tailscale.enabled) {
@@ -1393,6 +1602,11 @@ export class PhoneServerRuntime {
   }
 
   async handlePhoneStop(ctx: ExtensionCommandContext) {
+    this.captureCtx(ctx);
+    return this.enqueueLifecycleCommand(() => this.handlePhoneStopOnce(ctx));
+  }
+
+  private async handlePhoneStopOnce(ctx: ExtensionCommandContext) {
     this.captureCtx(ctx);
     const hadLocalServer = Boolean(this.server);
     await this.stopServer();
