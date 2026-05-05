@@ -36,7 +36,16 @@ export function handleAuthFailure() {
 }
 
 function sendUiResponse(payload) {
-  if (sendRpc({ type: "extension_ui_response", ...payload })) {
+  const pending = state.pendingUiRequest;
+  const pendingId = pending?.id == null ? "" : String(pending.id);
+  const responseId = payload?.id == null ? "" : String(payload.id);
+  if (!pendingId || !responseId || pendingId !== responseId) {
+    clearUiModal();
+    showToast("That UI request is no longer pending.", "error");
+    return;
+  }
+
+  if (sendRpc({ type: "extension_ui_response", sessionWorkerId: pending.sessionWorkerId, ...payload })) {
     clearUiModal();
   }
 }
@@ -75,6 +84,10 @@ function handleExtensionUiRequest(request) {
 
   if (!["select", "confirm", "input", "editor"].includes(request.method)) {
     showToast(`Unsupported UI request: ${request.method || "unknown"}`);
+    return;
+  }
+
+  if (request.sessionWorkerId && state.activeSessionId && request.sessionWorkerId !== state.activeSessionId) {
     return;
   }
 
@@ -347,6 +360,10 @@ export async function handleEnvelope(event) {
     state.activeSessions = event.data?.sessions || [];
     state.activeSessionId = nextActiveSessionId;
 
+    if (activeSessionChanged) {
+      clearUiModal();
+    }
+
     if (activeSessionChanged && state.snapshotWorkerId && state.snapshotWorkerId !== state.activeSessionId) {
       clearSnapshotView();
       renderMessages();
@@ -367,6 +384,7 @@ export async function handleEnvelope(event) {
     state.status = { ...(state.status || {}), isStreaming: Boolean(event.state?.isStreaming) };
     state.messages = (event.messages || []).flatMap(transformMessage);
     state.commands = event.commands || state.commands;
+    clearUiModal();
     clearTransientState();
 
     if (event.liveAssistantMessage?.role === "assistant") {

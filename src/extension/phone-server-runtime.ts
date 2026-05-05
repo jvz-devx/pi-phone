@@ -1427,6 +1427,22 @@ export class PhoneServerRuntime {
 
     const worker = await this.getActiveWorkerForClient(ws);
     this.rememberPhoneSelection(worker);
+
+    if (command.type === "extension_ui_response") {
+      const requestWorkerId = typeof command.sessionWorkerId === "string" ? command.sessionWorkerId : "";
+      delete command.sessionWorkerId;
+      if (requestWorkerId && requestWorkerId !== worker.id) {
+        this.send(ws, { channel: "server", event: "client-error", data: { message: "That UI request belongs to a different session and was not submitted." } });
+        return;
+      }
+      const pendingId = worker.pendingUiRequest?.id == null ? "" : String(worker.pendingUiRequest.id);
+      const responseId = command.id == null ? "" : String(command.id);
+      if (!pendingId || !responseId || pendingId !== responseId) {
+        this.send(ws, { channel: "server", event: "client-error", data: { message: "That UI request is no longer pending." } });
+        return;
+      }
+    }
+
     const readOnlyCommandTypes = new Set(["get_state", "get_messages", "get_commands", "get_available_models", "get_session_stats", "phone_get_tree", "phone_list_sessions"]);
     if (!readOnlyCommandTypes.has(String(command.type || "")) && !(await this.ensurePhoneCanWrite(ws, worker))) {
       return;

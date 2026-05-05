@@ -103,11 +103,11 @@ export async function enableTailscaleServe(pi: ExtensionAPI, port: number) {
 
     const after = await getTailscaleServeInfo(pi, port);
     return {
-      enabled: after.active || !after.error,
-      changed: true,
+      enabled: after.active,
+      changed: after.active,
       replacedExisting: before.hadAnyWebConfig,
       url: after.url || before.url,
-      error: after.active ? "" : after.error,
+      error: after.active ? "" : (after.error || "tailscale serve command completed, but no matching Pi Phone HTTPS route was found."),
     };
   } catch (error) {
     return {

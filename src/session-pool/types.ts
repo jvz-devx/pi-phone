@@ -87,6 +87,7 @@ export interface SessionController {
   refreshCachedSnapshot(timeoutMs?: number): Promise<SessionSnapshot>;
   getSnapshot(): Promise<SessionSnapshot>;
   sendClientCommand(command: Record<string, unknown>, meta?: PendingClientResponse): Promise<string | undefined>;
+  cancelPendingUiRequest?(reason?: string): Promise<boolean>;
   reload(): Promise<void>;
   dispose(): Promise<void>;
   getStatus(): SessionStatus;

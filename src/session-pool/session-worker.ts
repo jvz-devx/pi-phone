@@ -628,6 +628,14 @@ export class PhoneSessionWorker {
     const nextCommand = { ...command } as Record<string, any>;
 
     if (nextCommand.type === "extension_ui_response") {
+      const pendingId = this.pendingUiRequest?.id == null ? "" : String(this.pendingUiRequest.id);
+      const responseId = nextCommand.id == null ? "" : String(nextCommand.id);
+      if (!pendingId) {
+        throw new Error("No pending UI request for this session.");
+      }
+      if (!responseId || responseId !== pendingId) {
+        throw new Error("That UI request is no longer pending.");
+      }
       this.pendingUiRequest = null;
       this.options.onStateChange();
     } else if (!nextCommand.id) {
@@ -641,6 +649,17 @@ export class PhoneSessionWorker {
     this.touch();
     this.child.stdin.write(`${JSON.stringify(nextCommand)}\n`);
     return nextCommand.id as string | undefined;
+  }
+
+  async cancelPendingUiRequest(reason = "Pi Phone disconnected before this UI request was answered.") {
+    if (!this.pendingUiRequest?.id) return false;
+    await this.sendClientCommand({
+      type: "extension_ui_response",
+      id: this.pendingUiRequest.id,
+      cancelled: true,
+      error: reason,
+    });
+    return true;
   }
 
   private async stopChildForRestart() {

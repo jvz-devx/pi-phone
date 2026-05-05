@@ -6,7 +6,7 @@ import { findLocalCommandDefinition } from "./command-catalog.js";
 import { el, state } from "./state.js";
 import { openSheet } from "./sheet-navigation.js";
 import { refreshAll, requestReload, sendLocalCommand, sendRpc } from "./transport.js";
-import { autoResizeTextarea, renderHeader, setFollowLatest, showToast } from "./ui.js";
+import { autoResizeTextarea, clearUiModal, renderHeader, setFollowLatest, showToast } from "./ui.js";
 import { clearSnapshotView, renderMessages } from "./messages.js";
 
 function parseLocalCommandInput(text) {
@@ -327,6 +327,7 @@ export function prepareSessionSelection(sessionId) {
     return false;
   }
 
+  clearUiModal();
   clearSnapshotView();
   setFollowLatest(true);
   renderHeader();
@@ -365,6 +366,7 @@ export function prepareSessionSpawn() {
     return false;
   }
 
+  clearUiModal();
   clearSnapshotView();
   setFollowLatest(true);
   renderHeader();

@@ -153,12 +153,39 @@ export function connectSocket({ handleEnvelope, handleAuthFailure }) {
   });
 }
 
-export async function loadHealth() {
+function healthError(response) {
+  const error = new Error(`Health check failed (${response.status})`);
+  error.status = response.status;
+  return error;
+}
+
+async function fetchHealthForToken(token) {
   const url = new URL("/api/health", window.location.origin);
-  if (state.token) url.searchParams.set("token", state.token);
+  if (token) url.searchParams.set("token", token);
   const response = await fetch(url, { cache: "no-store" });
-  if (!response.ok) throw new Error(`Health check failed (${response.status})`);
-  state.health = await response.json();
+  if (!response.ok) throw healthError(response);
+  return response.json();
+}
+
+export async function validateToken(nextToken) {
+  let health;
+  try {
+    health = await fetchHealthForToken(nextToken);
+  } catch (error) {
+    if (error?.status === 401 || error?.status === 403) {
+      throw new Error("The token was rejected. Enter the current /phone-start token.");
+    }
+    throw error;
+  }
+  if (health?.hasToken && !health?.cwd) {
+    throw new Error("The token was rejected. Enter the current /phone-start token.");
+  }
+  return health;
+}
+
+export async function loadHealth() {
+  const health = await fetchHealthForToken(state.token);
+  state.health = health;
   state.status = state.health;
   renderHeader();
 }
@@ -169,6 +196,10 @@ export async function boot({ handleEnvelope, handleAuthFailure }) {
   try {
     await loadHealth();
   } catch (error) {
+    if (state.token && (error?.status === 401 || error?.status === 403)) {
+      handleAuthFailure();
+      return;
+    }
     showBanner(error instanceof Error ? error.message : "Failed to reach server.", "error");
     if (!state.manuallyClosed) {
       clearReconnectTimer();

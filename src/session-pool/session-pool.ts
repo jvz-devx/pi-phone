@@ -244,9 +244,13 @@ export class PhoneSessionPool {
   }
 
   private forwardEnvelope(worker: SessionController, envelope: any) {
+    const forwardedEnvelope = envelope?.channel === "rpc" && envelope.payload && typeof envelope.payload === "object"
+      ? { ...envelope, payload: { ...envelope.payload, sessionWorkerId: worker.id } }
+      : envelope;
+
     for (const [ws, client] of this.clients.entries()) {
       if (client.activeSessionId === worker.id) {
-        this.options.send(ws, envelope);
+        this.options.send(ws, forwardedEnvelope);
       }
     }
   }
@@ -288,10 +292,38 @@ export class PhoneSessionPool {
     });
   }
 
+  private cancelPendingUiRequestsAfterLastDisconnect() {
+    const pendingWorkers = this.getSessions().filter((worker) => worker.pendingUiRequest && worker.cancelPendingUiRequest);
+    if (pendingWorkers.length === 0) return;
+
+    void (async () => {
+      try {
+        await Promise.all(pendingWorkers.map(async (worker) => {
+          try {
+            await worker.cancelPendingUiRequest?.();
+          } catch (error) {
+            const message = error instanceof Error ? error.message : String(error);
+            worker.lastError = message;
+            console.warn(`Failed to cancel pending UI request for session ${worker.id}: ${message}`);
+          }
+        }));
+      } finally {
+        this.broadcastCatalog();
+        this.broadcastStatus();
+      }
+    })().catch((error) => {
+      const message = error instanceof Error ? error.message : String(error);
+      console.warn(`Failed to cancel pending UI requests after last client disconnect: ${message}`);
+    });
+  }
+
   removeClient(ws: WebSocket) {
     this.clients.delete(ws);
     this.statusSignatures.delete(ws);
     this.catalogSignatures.delete(ws);
+    if (this.clients.size === 0) {
+      this.cancelPendingUiRequestsAfterLastDisconnect();
+    }
     this.broadcastStatus();
   }
 
@@ -309,7 +341,7 @@ export class PhoneSessionPool {
       this.sendSnapshot(ws, worker, snapshot);
       this.sendStatus(ws);
       if (worker.pendingUiRequest) {
-        this.options.send(ws, { channel: "rpc", payload: worker.pendingUiRequest });
+        this.options.send(ws, { channel: "rpc", payload: { ...worker.pendingUiRequest, sessionWorkerId: worker.id } });
       }
     } catch (error) {
       const client = this.clients.get(ws);

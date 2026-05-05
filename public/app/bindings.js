@@ -5,7 +5,7 @@ import { el, state } from "./state.js";
 import { handleSheetButtonAction, sheetButtonActionKey } from "./sheet-actions.js";
 import { closeSheet, openSheet } from "./sheet-navigation.js";
 import { renderSheet } from "./sheets-view.js";
-import { connectSocket, refreshAll, sendRpc } from "./transport.js";
+import { connectSocket, refreshAll, sendRpc, validateToken } from "./transport.js";
 import {
   autoResizeTextarea,
   closeTokenModal,
@@ -144,7 +144,7 @@ export function initializeBindings({ handleEnvelope, handleAuthFailure }) {
     handleSheetButtonAction(button);
   });
 
-  el.tokenSaveButton.addEventListener("click", () => {
+  el.tokenSaveButton.addEventListener("click", async () => {
     const nextToken = el.tokenInput.value.trim();
     if (!nextToken) {
       showToast("Enter the current /phone-start token.", "error");
@@ -152,10 +152,21 @@ export function initializeBindings({ handleEnvelope, handleAuthFailure }) {
       return;
     }
 
-    state.token = nextToken;
-    storeToken(state.token);
-    closeTokenModal();
-    connectSocket({ handleEnvelope, handleAuthFailure });
+    el.tokenSaveButton.disabled = true;
+    try {
+      const health = await validateToken(nextToken);
+      state.token = nextToken;
+      state.health = health;
+      state.status = health;
+      storeToken(state.token);
+      closeTokenModal();
+      connectSocket({ handleEnvelope, handleAuthFailure });
+    } catch (error) {
+      showToast(error instanceof Error ? error.message : "The token was rejected. Enter the current /phone-start token.", "error");
+      el.tokenInput.focus();
+    } finally {
+      el.tokenSaveButton.disabled = false;
+    }
   });
 
   el.tokenInput.addEventListener("keydown", (event) => {
