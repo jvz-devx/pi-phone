@@ -157,6 +157,7 @@ function renderActiveSessionsSheet() {
       sectionKind === "parent" ? "mirroring cli" : "parallel",
       session.isStreaming ? "live" : "",
       session.hasPendingUiRequest ? "needs input" : "",
+      session.kind === "parent" && session.commandContextAvailable === false ? "command controls unavailable" : "",
       session.model?.name || "",
       Number.isFinite(session.messageCount) ? `${session.messageCount} messages` : "",
       session.secondaryLabel || "",

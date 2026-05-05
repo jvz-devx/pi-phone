@@ -9,8 +9,8 @@ import {
   parseFrontmatter,
   stripFrontmatter,
 } from "@mariozechner/pi-coding-agent";
-import { readFileSync } from "node:fs";
-import { dirname } from "node:path";
+import { existsSync, readFileSync } from "node:fs";
+import { dirname, isAbsolute } from "node:path";
 import type {
   PendingClientResponse,
   SessionController,
@@ -216,6 +216,7 @@ type PendingUserMessage = {
 type ParentSessionWorkerOptions = SessionWorkerOptions<PhoneParentSessionWorker> & {
   getCtx: () => ExtensionContext | null;
   getCommandCtx: () => ExtensionCommandContext | null;
+  onReplacementContext?: (ctx: ExtensionCommandContext) => void;
 };
 
 export class PhoneParentSessionWorker implements SessionController {
@@ -225,6 +226,7 @@ export class PhoneParentSessionWorker implements SessionController {
   previousCwd: string | null = null;
   currentSessionFile: string | null = null;
   lastError = "";
+  private lastErrorFromCommandContextUnavailable = false;
   lastState: any = null;
   lastMessages: any[] = [];
   lastCommands: any[] = [];
@@ -242,9 +244,13 @@ export class PhoneParentSessionWorker implements SessionController {
 
   constructor(
     private readonly options: ParentSessionWorkerOptions,
-    private readonly pi: ExtensionAPI,
+    private pi: ExtensionAPI,
   ) {
     this.cwd = options.cwd;
+  }
+
+  setPi(pi: ExtensionAPI) {
+    this.pi = pi;
   }
 
   private touch() {
@@ -259,6 +265,18 @@ export class PhoneParentSessionWorker implements SessionController {
 
   private currentCommandCtx() {
     return this.options.getCommandCtx();
+  }
+
+  private hasCommandContext() {
+    return Boolean(this.currentCommandCtx());
+  }
+
+  private commandContextUnavailableMessage(action: string) {
+    return `Parent session ${action} requires a fresh Pi command context. Run a Pi Phone slash command in the terminal (for example /phone-status) to recapture it.`;
+  }
+
+  private isCommandContextUnavailableError(message: string) {
+    return message.includes("requires a fresh Pi command context") || message.includes("command controls are unavailable");
   }
 
   private async withAutoConfirmedUi<T>(
@@ -334,6 +352,7 @@ export class PhoneParentSessionWorker implements SessionController {
       messageCount: sessionContext.messages.length + this.pendingUserMessages.length,
       pendingMessageCount: ctx.hasPendingMessages() ? 1 : 0,
       contextUsage: contextUsage || undefined,
+      commandContextAvailable: this.hasCommandContext(),
     };
 
     return {
@@ -378,6 +397,26 @@ export class PhoneParentSessionWorker implements SessionController {
     return Array.isArray(this.lastCommands) && this.lastCommands.length > 0 ? this.lastCommands : this.pi.getCommands();
   }
 
+  private commandSourcePath(command: any) {
+    if (typeof command?.sourceInfo?.path === "string" && command.sourceInfo.path) {
+      return command.sourceInfo.path;
+    }
+
+    if (typeof command?.path === "string" && command.path) {
+      return command.path;
+    }
+
+    if (typeof command?.location === "string" && command.location) {
+      const location = command.location;
+      const looksLikePath = isAbsolute(location) || location.includes("/") || location.includes("\\");
+      if (looksLikePath && existsSync(location)) {
+        return location;
+      }
+    }
+
+    return "";
+  }
+
   private expandPromptTemplate(text: string, filePath: string) {
     const parsed = parseSlashCommandText(text);
     if (!parsed) return text;
@@ -407,13 +446,14 @@ export class PhoneParentSessionWorker implements SessionController {
       throw new Error("Extension slash commands are not supported while mirroring the live CLI session. Open a parallel session to use them.");
     }
 
-    if (command.source === "prompt" && typeof command.path === "string" && command.path) {
-      return this.expandPromptTemplate(text, command.path);
+    const sourcePath = this.commandSourcePath(command);
+    if (command.source === "prompt" && sourcePath) {
+      return this.expandPromptTemplate(text, sourcePath);
     }
 
-    if (command.source === "skill" && typeof command.path === "string" && command.path) {
+    if (command.source === "skill" && sourcePath) {
       const skillName = parsed.name.replace(/^skill:/, "") || parsed.name;
-      return this.expandSkillCommand(text, command.path, skillName);
+      return this.expandSkillCommand(text, sourcePath, skillName);
     }
 
     return text;
@@ -473,10 +513,17 @@ export class PhoneParentSessionWorker implements SessionController {
   private async switchParentSession(sessionPath: string) {
     const commandCtx = this.currentCommandCtx();
     if (!commandCtx) {
-      throw new Error("No active command context is available to switch the live CLI session.");
+      throw new Error(this.commandContextUnavailableMessage("session switch"));
     }
 
-    const result = await commandCtx.switchSession(sessionPath);
+    const result = await commandCtx.switchSession(sessionPath, {
+      // Pi >= 0.73 invalidates the command context used to replace the session.
+      // Refresh our cached context from the replacement callback when available.
+      withSession: async (replacementCtx) => {
+        this.options.onReplacementContext?.(replacementCtx);
+        this.captureContext(replacementCtx, { emitSnapshot: true });
+      },
+    });
     await this.refreshCachedSnapshot();
     this.emitSnapshot();
     return result;
@@ -536,7 +583,8 @@ export class PhoneParentSessionWorker implements SessionController {
       childPid: process.pid,
       sessionWorkerId: this.id,
       sessionKind: "parent",
-    };
+      commandContextAvailable: this.hasCommandContext(),
+    } as SessionStatus & { commandContextAvailable: boolean };
   }
 
   getSummary(): SessionSummary {
@@ -573,7 +621,8 @@ export class PhoneParentSessionWorker implements SessionController {
       childPid: process.pid,
       cwd: this.cwd,
       mirrorsCli: true,
-    };
+      commandContextAvailable: this.hasCommandContext(),
+    } as SessionSummary & { commandContextAvailable: boolean };
   }
 
   async request(command: Record<string, unknown>): Promise<any> {
@@ -634,10 +683,16 @@ export class PhoneParentSessionWorker implements SessionController {
 
       if (type === "new_session") {
         const commandCtx = this.currentCommandCtx();
-        if (!commandCtx) throw new Error("No active command context is available to create a new live CLI session.");
-        const result = await this.withAutoConfirmedUi(commandCtx, () => commandCtx.newSession(typeof command.parentSession === "string" && command.parentSession
-          ? { parentSession: command.parentSession }
-          : undefined));
+        if (!commandCtx) throw new Error(this.commandContextUnavailableMessage("new-session"));
+        const result = await this.withAutoConfirmedUi(commandCtx, () => commandCtx.newSession({
+          ...(typeof command.parentSession === "string" && command.parentSession
+            ? { parentSession: command.parentSession }
+            : {}),
+          withSession: async (replacementCtx) => {
+            this.options.onReplacementContext?.(replacementCtx);
+            this.captureContext(replacementCtx, { emitSnapshot: true });
+          },
+        }));
         await this.refreshCachedSnapshot();
         this.emitSnapshot();
         return this.buildResponse(id, type, true, result);
@@ -650,8 +705,13 @@ export class PhoneParentSessionWorker implements SessionController {
 
       if (type === "fork") {
         const commandCtx = this.currentCommandCtx();
-        if (!commandCtx) throw new Error("No active command context is available to fork the live CLI session.");
-        const result = await commandCtx.fork(String(command.entryId || ""));
+        if (!commandCtx) throw new Error(this.commandContextUnavailableMessage("fork"));
+        const result = await commandCtx.fork(String(command.entryId || ""), {
+          withSession: async (replacementCtx) => {
+            this.options.onReplacementContext?.(replacementCtx);
+            this.captureContext(replacementCtx, { emitSnapshot: true });
+          },
+        });
         await this.refreshCachedSnapshot();
         this.emitSnapshot();
         return this.buildResponse(id, type, true, { cancelled: result.cancelled });
@@ -683,11 +743,15 @@ export class PhoneParentSessionWorker implements SessionController {
 
       if (type === "reload") {
         const commandCtx = this.currentCommandCtx();
-        if (!commandCtx) throw new Error("No active command context is available to reload the live CLI session.");
+        if (!commandCtx) throw new Error(this.commandContextUnavailableMessage("reload"));
+        // reload does not expose a replacement callback in older/current Pi APIs.
+        // The session_start handler will refresh snapshots after the replacement binds
+        // and clear command-only controls when Pi does not provide a fresh ctx.
+        this.pendingUiRequest = null;
+        this.liveAssistantMessage = null;
+        this.liveTools.clear();
         await commandCtx.reload();
-        await this.refreshCachedSnapshot();
-        this.emitSnapshot();
-        return this.buildResponse(id, type, true);
+        return this.buildResponse(id, type, true, { commandContextAvailable: this.hasCommandContext() });
       }
 
       if (type === "set_session_name") {
@@ -705,6 +769,7 @@ export class PhoneParentSessionWorker implements SessionController {
     } catch (error) {
       const message = error instanceof Error ? error.message : String(error);
       this.lastError = message;
+      this.lastErrorFromCommandContextUnavailable = this.isCommandContextUnavailableError(message);
       this.options.onStateChange();
       return this.buildResponse(id, type, false, undefined, message);
     }
@@ -744,7 +809,7 @@ export class PhoneParentSessionWorker implements SessionController {
     }
   }
 
-  captureContext(ctx: ExtensionContext | ExtensionCommandContext, options: { emitSnapshot?: boolean } = {}) {
+  captureContext(ctx: ExtensionContext | ExtensionCommandContext, options: { emitSnapshot?: boolean; emitCatalog?: boolean } = {}) {
     this.cwd = ctx.sessionManager.getCwd();
     this.touch();
     void this.refreshCachedSnapshot()
@@ -752,11 +817,34 @@ export class PhoneParentSessionWorker implements SessionController {
         if (options.emitSnapshot) {
           this.emitSnapshot();
         }
+        if (options.emitCatalog) {
+          this.options.onStateChange();
+        }
       })
       .catch((error) => {
-        this.lastError = error instanceof Error ? error.message : String(error);
+        const message = error instanceof Error ? error.message : String(error);
+        this.lastError = message;
+        this.lastErrorFromCommandContextUnavailable = this.isCommandContextUnavailableError(message);
         this.options.onStateChange();
       });
+  }
+
+  markCommandContextUnavailable(message: string) {
+    this.pendingUiRequest = null;
+    this.lastError = message;
+    this.lastErrorFromCommandContextUnavailable = true;
+    if (this.lastState) {
+      this.lastState = { ...this.lastState, commandContextAvailable: false };
+    }
+    this.touch();
+  }
+
+  clearCommandContextUnavailableError() {
+    if (!this.lastErrorFromCommandContextUnavailable && !this.isCommandContextUnavailableError(this.lastError)) return false;
+    this.lastError = "";
+    this.lastErrorFromCommandContextUnavailable = false;
+    this.touch();
+    return true;
   }
 
   handleAgentStart(ctx: ExtensionContext | ExtensionCommandContext) {

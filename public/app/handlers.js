@@ -191,7 +191,11 @@ function handleRpcPayload(payload) {
 
     if (payload.command === "reload") {
       clearTransientState();
-      showToast("Reloaded extensions, skills, prompts, and themes.");
+      if (payload.data?.commandControlsAvailable === false) {
+        showToast(payload.data?.warning || "Reloaded, but parent session command controls need a fresh terminal command context.", "error");
+      } else {
+        showToast("Reloaded extensions, skills, prompts, and themes.");
+      }
       refreshAll({ forceQuota: true });
       return;
     }
@@ -420,6 +424,10 @@ export async function handleEnvelope(event) {
     }
     if (event.event === "single-client-replaced") {
       showBanner(event.data?.message || "This phone session was replaced by another client.", "error");
+      return;
+    }
+    if (event.event === "command-controls-unavailable") {
+      showBanner(event.data?.message || "Parent session command controls are unavailable until Pi provides a fresh command context.", "error");
       return;
     }
     if (event.event === "idle-timeout") {

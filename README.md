@@ -24,7 +24,7 @@ A phone-first remote UI for [Pi](https://pi.dev) that lets you drive a real Pi s
 ## Requirements
 
 - Pi installed and working
-- Tested with Pi `0.58.4`
+- Compatible with Pi `0.58.4` and newer Pi `0.73.x` session lifecycle events
 - Node.js available for extension dependencies
 - Optional but strongly recommended: Tailscale installed and logged in if you want easy remote phone access
 
@@ -33,7 +33,7 @@ A phone-first remote UI for [Pi](https://pi.dev) that lets you drive a real Pi s
 Install `pi-phone` from npm with Pi:
 
 ```bash
-pi install npm:@malinamnam/pi-phone
+pi install git:https://github.com/jvz-devx/pi-phone@master
 ```
 
 Then either restart Pi or run:
@@ -48,6 +48,17 @@ If you want to verify that the package is installed and enabled:
 pi list
 pi config
 ```
+
+## Development
+
+On Nix/NixOS, enter the pinned development shell and run verification with:
+
+```bash
+nix develop path:$PWD -c npm install
+nix develop path:$PWD -c npm test
+```
+
+`npm test` currently runs the TypeScript type check.
 
 ## Setup guide
 
@@ -134,6 +145,33 @@ Use `-` to explicitly disable the token:
 
 ```text
 /phone-start 8787 -
+```
+
+### `/phone`
+
+LAN-friendly shortcut for personal setups:
+
+```text
+/phone
+/phone --token mytoken
+/phone --port 8788
+```
+
+Behavior:
+
+- default host: `PI_PHONE_HOST` or `0.0.0.0`
+- default port: `PI_PHONE_PORT` or `8787`
+- auto-picks the next free port when no port is provided
+- default token: `PI_PHONE_TOKEN`, or a generated token if unset
+- default idle timeout: `PI_PHONE_IDLE_MINS` / `PI_PHONE_IDLE_MINUTES`, or `9999` minutes
+- any extra args are passed through to `/phone-start`
+
+### `/phone-lan`
+
+Same LAN defaults as `/phone`, but does not auto-pick a free port:
+
+```text
+/phone-lan
 ```
 
 ### `/phone-stop`

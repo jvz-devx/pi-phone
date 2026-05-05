@@ -319,7 +319,8 @@ export function renderHeader() {
   el.modelValue.textContent = snapshot.model?.name || snapshot.model?.id || activeSession?.model?.name || "Default";
   el.thinkingValue.textContent = snapshot.thinkingLevel || "—";
   const owner = status.controlOwner || "cli";
-  el.streamingValue.textContent = `${status.isStreaming || snapshot.isStreaming ? "Streaming" : "Idle"} · ${owner}`;
+  const commandControlsUnavailable = status.sessionKind === "parent" && status.commandContextAvailable === false;
+  el.streamingValue.textContent = `${status.isStreaming || snapshot.isStreaming ? "Streaming" : "Idle"} · ${owner}${commandControlsUnavailable ? " · command controls unavailable" : ""}`;
   el.serverValue.textContent = status.port ? `${status.host || "127.0.0.1"}:${status.port}` : "—";
   updateComposerState();
   renderQuota();

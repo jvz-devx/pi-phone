@@ -37,6 +37,8 @@ import { buildThemePayload } from "./phone-theme";
 import type { PhoneConfig } from "./types";
 
 type AnyCtx = ExtensionContext | ExtensionCommandContext;
+type SessionStartReason = "startup" | "reload" | "new" | "resume" | "fork";
+type SessionShutdownReason = "quit" | "reload" | "new" | "resume" | "fork";
 
 type SlashCommandMatch = {
   text: string;
@@ -45,6 +47,16 @@ type SlashCommandMatch = {
 };
 
 const DEFAULT_IDLE_TIMEOUT_MS = 2 * 60 * 60_000;
+
+function readPositivePort(value: string | undefined, fallback: number) {
+  const port = Number(value);
+  return Number.isFinite(port) && port > 0 ? port : fallback;
+}
+
+function readIdleTimeoutMs() {
+  const minutes = Number(process.env.PI_PHONE_IDLE_MINS ?? process.env.PI_PHONE_IDLE_MINUTES);
+  return Number.isFinite(minutes) ? Math.max(0, Math.round(minutes * 60_000)) : DEFAULT_IDLE_TIMEOUT_MS;
+}
 
 function isAddressInUseError(error: unknown) {
   const err = error as NodeJS.ErrnoException | null;
@@ -67,23 +79,36 @@ function parseSlashCommandText(text: unknown) {
   };
 }
 
+function sessionStartReason(event: unknown): SessionStartReason | undefined {
+  const reason = (event as { reason?: unknown } | null)?.reason;
+  return reason === "startup" || reason === "reload" || reason === "new" || reason === "resume" || reason === "fork"
+    ? reason
+    : undefined;
+}
+
+function sessionShutdownReason(event: unknown): SessionShutdownReason | undefined {
+  const reason = (event as { reason?: unknown } | null)?.reason;
+  return reason === "quit" || reason === "reload" || reason === "new" || reason === "resume" || reason === "fork"
+    ? reason
+    : undefined;
+}
+
 export class PhoneServerRuntime {
   private latestCtx: AnyCtx | null = null;
   private latestError = "";
   private config: PhoneConfig = {
-    host: "127.0.0.1",
-    port: 8787,
+    host: process.env.PI_PHONE_HOST || "127.0.0.1",
+    port: readPositivePort(process.env.PI_PHONE_PORT, 8787),
     token: process.env.PI_PHONE_TOKEN || "",
     cwd: process.cwd(),
-    idleTimeoutMs: Number.isFinite(Number(process.env.PI_PHONE_IDLE_MINUTES))
-      ? Math.max(0, Math.round(Number(process.env.PI_PHONE_IDLE_MINUTES) * 60_000))
-      : DEFAULT_IDLE_TIMEOUT_MS,
+    idleTimeoutMs: readIdleTimeoutMs(),
   };
   private server: Server | null = null;
   private wss: WebSocketServer | null = null;
   private sessionPool: PhoneSessionPool | null = null;
   private parentWorker: PhoneParentSessionWorker | null = null;
   private latestCommandCtx: ExtensionCommandContext | null = null;
+  private latestCommandCtxSessionKey: string | null = null;
   private controlOwner: "cli" | "phone" = "cli";
   private phoneSelectedSessionId: string | null = null;
   private idleStopTimer: NodeJS.Timeout | null = null;
@@ -91,13 +116,88 @@ export class PhoneServerRuntime {
   private runtimeControlToken = "";
   private activeRuntimeStatePath: string | null = null;
 
-  constructor(private readonly pi: ExtensionAPI) {}
+  constructor(private pi: ExtensionAPI) {}
+
+  setPi(pi: ExtensionAPI) {
+    this.pi = pi;
+    this.parentWorker?.setPi(pi);
+  }
 
   captureCtx(ctx: AnyCtx) {
+    const hadCommandCtx = Boolean(this.latestCommandCtx);
+    let restoredCommandCtx = false;
+    let clearedCommandCtxError = false;
+
     this.latestCtx = ctx;
     if (typeof (ctx as ExtensionCommandContext).waitForIdle === "function") {
       this.latestCommandCtx = ctx as ExtensionCommandContext;
+      this.latestCommandCtxSessionKey = ctx.sessionManager.getSessionFile() || ctx.sessionManager.getSessionId() || null;
+      restoredCommandCtx = !hadCommandCtx;
+      clearedCommandCtxError = Boolean(this.parentWorker?.clearCommandContextUnavailableError());
     }
+
+    if (restoredCommandCtx || clearedCommandCtxError) {
+      this.sessionPool?.broadcastCatalog();
+      this.broadcastStatus();
+    }
+
+    return restoredCommandCtx;
+  }
+
+  private captureReplacementCtx(ctx: ExtensionCommandContext) {
+    const restoredCommandCtx = this.captureCtx(ctx);
+    this.syncCwdFromCtx(ctx);
+    this.parentWorker?.captureContext(ctx, { emitSnapshot: true, emitCatalog: true });
+    if (!restoredCommandCtx) {
+      this.sessionPool?.broadcastCatalog();
+    }
+    this.updateStatusUi(ctx);
+    this.broadcastStatus();
+  }
+
+  private clearCommandCtxForReplacement(reason: SessionStartReason | SessionShutdownReason, ctx?: ExtensionContext, phase: "start" | "shutdown" = "start") {
+    // Pi >= 0.73 invalidates command contexts across session replacement. Never keep a
+    // reload command ctx: reload has no withSession replacement callback, and
+    // session_start only provides ExtensionContext on affected Pi versions. For
+    // new/resume/fork, keep a freshly captured withSession ctx only when it points at
+    // the new session (start) or no longer points at the shutting-down session.
+    const eventSessionKey = ctx?.sessionManager.getSessionFile() || ctx?.sessionManager.getSessionId() || null;
+    const hadCommandCtx = Boolean(this.latestCommandCtx);
+    const hasFreshReplacementCtx = Boolean(
+      reason !== "reload"
+      && hadCommandCtx
+      && eventSessionKey
+      && (phase === "start"
+        ? this.latestCommandCtxSessionKey === eventSessionKey
+        : this.latestCommandCtxSessionKey !== eventSessionKey),
+    );
+
+    if (!hasFreshReplacementCtx && hadCommandCtx) {
+      this.latestCommandCtx = null;
+      this.latestCommandCtxSessionKey = null;
+      this.parentWorker?.markCommandContextUnavailable("Command-only parent session controls are unavailable until Pi provides a fresh command context.");
+      // The Active Sessions sheet reads command controls availability from the
+      // session catalog summary, so broadcast it immediately when command-only
+      // controls are invalidated instead of waiting for the next catalog refresh.
+      this.sessionPool?.broadcastCatalog();
+      this.broadcast({
+        channel: "server",
+        event: "command-controls-unavailable",
+        data: { message: "Parent session command controls are unavailable until you run a Pi Phone slash command in the terminal." },
+      });
+      this.broadcastStatus();
+    }
+
+    return hasFreshReplacementCtx;
+  }
+
+  private syncCwdFromCtx(ctx: AnyCtx) {
+    const nextCwd = ctx.sessionManager.getCwd() || ctx.cwd || this.config.cwd || process.cwd();
+    if (nextCwd !== this.config.cwd) {
+      this.config.cwd = nextCwd;
+      this.sessionPool?.setCwd(nextCwd);
+    }
+    return nextCwd;
   }
 
   private activeCwd() {
@@ -129,6 +229,7 @@ export class PhoneServerRuntime {
       lastActivityAt: this.lastActivityAt,
       singleClientMode: true,
       controlOwner: this.controlOwner,
+      commandContextAvailable: Boolean(this.latestCommandCtx),
       ...(theme ? { theme } : {}),
     };
   }
@@ -566,6 +667,7 @@ export class PhoneServerRuntime {
           lastActivityAt: this.lastActivityAt,
           singleClientMode: true,
           controlOwner: this.controlOwner,
+          commandContextAvailable: Boolean(this.latestCommandCtx),
           pid: process.pid,
           piCommand: "live cli + parallel pi --mode rpc",
           serverRunning: Boolean(this.server),
@@ -590,6 +692,7 @@ export class PhoneServerRuntime {
             shouldAutoRestart: () => false,
             getCtx: () => this.latestCtx,
             getCommandCtx: () => this.latestCommandCtx,
+            onReplacementContext: (replacementCtx) => this.captureReplacementCtx(replacementCtx),
           },
           this.pi,
         );
@@ -828,13 +931,18 @@ export class PhoneServerRuntime {
       if (message.command === "reload") {
         try {
           await worker.reload();
+          const commandControlsAvailable = worker.kind !== "parent" || Boolean(this.latestCommandCtx);
           this.send(ws, {
             channel: "rpc",
             payload: {
               type: "response",
               command: "reload",
               success: true,
-              data: { sessionFile: worker.currentSessionFile },
+              data: {
+                sessionFile: worker.currentSessionFile,
+                commandControlsAvailable,
+                ...(commandControlsAvailable ? {} : { warning: "Reload succeeded, but parent session command controls are unavailable until a fresh command context is captured." }),
+              },
             },
           });
           await this.sessionPool.refreshActiveSnapshot(ws);
@@ -1180,11 +1288,21 @@ export class PhoneServerRuntime {
     }
   }
 
-  async handleSessionStart(ctx: ExtensionContext) {
+  async handleSessionStart(event: unknown, ctx: ExtensionContext) {
+    const reason = sessionStartReason(event);
+    if (reason === "new" || reason === "resume" || reason === "fork" || reason === "reload") {
+      this.clearCommandCtxForReplacement(reason, ctx);
+      await this.handleSessionSwitch(ctx);
+      return;
+    }
+
+    if (this.server && this.latestCommandCtx && typeof (ctx as ExtensionCommandContext).waitForIdle !== "function") {
+      this.clearCommandCtxForReplacement("reload", ctx);
+    }
+
     this.captureCtx(ctx);
-    if (!this.server) {
-      this.config.cwd = this.activeCwd();
-    } else {
+    this.syncCwdFromCtx(ctx);
+    if (this.server) {
       this.parentWorker?.captureContext(ctx, { emitSnapshot: true });
       if (!this.phoneSelectedSessionId || !this.sessionPool?.getSession(this.phoneSelectedSessionId)) {
         this.rememberPhoneSelection(this.parentWorker);
@@ -1196,9 +1314,8 @@ export class PhoneServerRuntime {
 
   async handleSessionSwitch(ctx: ExtensionContext) {
     this.captureCtx(ctx);
-    if (!this.server) {
-      this.config.cwd = this.activeCwd();
-    } else {
+    this.syncCwdFromCtx(ctx);
+    if (this.server) {
       this.parentWorker?.captureContext(ctx, { emitSnapshot: true });
       if (!this.phoneSelectedSessionId || this.phoneSelectedSessionId === this.parentWorker?.id) {
         this.rememberPhoneSelection(this.parentWorker);
@@ -1208,7 +1325,24 @@ export class PhoneServerRuntime {
     this.broadcastStatus();
   }
 
-  async handleSessionShutdown(ctx: ExtensionContext) {
+  async handleSessionShutdown(event: unknown, ctx: ExtensionContext) {
+    const reason = sessionShutdownReason(event);
+    if (reason === "new" || reason === "resume" || reason === "fork" || reason === "reload") {
+      const hasFreshReplacementCtx = this.clearCommandCtxForReplacement(reason, ctx, "shutdown");
+      // A replacement command context may already have been captured via withSession
+      // before Pi emits shutdown for the old session. Do not let that stale
+      // ExtensionContext become latestCtx again, or parent controls/snapshots can
+      // regress to the old session and appear unavailable.
+      if (!hasFreshReplacementCtx) {
+        this.captureCtx(ctx);
+        this.syncCwdFromCtx(ctx);
+        this.updateStatusUi(ctx);
+      } else {
+        this.broadcastStatus();
+      }
+      return;
+    }
+
     this.captureCtx(ctx);
     await this.stopServer();
     await disableMatchingTailscaleServe(this.pi, this.config.port);
