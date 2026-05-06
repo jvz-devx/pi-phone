@@ -33,7 +33,7 @@ import {
   getTreeStateFromSessionFile,
   listSessionsForCwd,
 } from "./phone-sessions";
-import { mimeTypes, publicFilePath, sanitizePublicPath } from "./phone-static";
+import { mimeTypes, sanitizeStaticPath, staticIndexFilePath } from "./phone-static";
 import { disableMatchingTailscaleServe, enableTailscaleServe, getTailscaleServeInfo } from "./phone-tailscale";
 import { buildThemePayload } from "./phone-theme";
 import type { PhoneConfig } from "./types";
@@ -897,7 +897,7 @@ export class PhoneServerRuntime {
     }
 
     const pathname = url.pathname === "/" ? "/index.html" : url.pathname;
-    const filePath = sanitizePublicPath(pathname);
+    const filePath = sanitizeStaticPath(pathname);
     if (!filePath) {
       res.writeHead(403, { "Content-Type": "application/json; charset=utf-8" });
       res.end(JSON.stringify({ error: "Forbidden" }));
@@ -919,7 +919,7 @@ export class PhoneServerRuntime {
       else res.end();
     } catch {
       try {
-        const body = await readFile(publicFilePath("index.html"));
+        const body = await readFile(staticIndexFilePath());
         if (this.isApiAuthorized(req, url)) this.markActivity();
         res.writeHead(200, {
           "Content-Type": "text/html; charset=utf-8",

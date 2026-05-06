@@ -1,6 +1,6 @@
 # SvelteKit validation for Steps 70-73
 
-This checklist covers quota/context, responsive layout, and PWA/static serving validation for the SvelteKit frontend without modifying `public/`.
+This checklist covers quota/context, responsive layout, and PWA/static serving validation for the SvelteKit frontend. Runtime static serving prefers `frontend/build/` when present and uses `public/` only as a deprecated fallback; these checks should not modify `public/`.
 
 ## Live QA availability in this implementation loop
 
@@ -27,7 +27,7 @@ Current automated coverage added/extended for these steps:
 | 70 | `frontend/src/lib/adapters/quota-context.ts` centralizes supported-model detection (`openai-codex` + `gpt-*`), context usage text, and stale quota hiding. Fixture tests assert supported GPT quota displays/fetches and unsupported models clear/hide quota without calling `/api/quota`. Static checks assert `ComposerMeta` and `PhoneClient` use the same helper. |
 | 71 | Static validation checks mobile safe-area CSS, visual viewport/keyboard inset variables, bottom sheet CSS, touch target media query, ChatWorkspace follow-latest thresholds, bottom reserve, and accessible jump-to-latest wiring. |
 | 72 | Static validation checks the desktop `1024px` split-workspace breakpoint, persisted left/right rail state, grid template columns, inspector landmark, and quick actions presence. |
-| 73 | Static validation checks PWA manifest content, Svelte-specific service worker behavior, `/api/*` and `/ws` service-worker bypass, token query redirect/cache purge, built SvelteKit `index.html` asset references when `frontend/build` exists, `PhoneServerRuntime` API/static fallback ordering, and release-script guardrails that keep public copy out of routine test/build scripts. `scripts/check-phone-static-fallback.mjs` also verifies adapter-static fallback and server MIME/fallback routes, and the guarded dry-run runs both static validation commands before any confirmed public copy. |
+| 73 | Static validation checks PWA manifest content, Svelte-specific service worker behavior, `/api/*` and `/ws` service-worker bypass, token query redirect/cache purge, built SvelteKit `index.html` asset references when `frontend/build` exists, `PhoneServerRuntime` API/static fallback ordering, Svelte-first static root selection with deprecated `public/` fallback, and guardrails that keep public copy out of routine test/build scripts. `scripts/check-phone-static-fallback.mjs` also verifies adapter-static fallback and server MIME/fallback routes, and the guarded dry-run runs both static validation commands before any confirmed legacy fallback copy. |
 
 These checks are regression coverage; they do not prove real mobile keyboard ergonomics, actual installed-PWA behavior, or live server/browser behavior.
 
@@ -74,7 +74,7 @@ These checks are regression coverage; they do not prove real mobile keyboard erg
    npm run frontend:sync-public:dry-run
    ```
 
-2. Confirm the dry-run reports success and `git status --short -- public` remains empty. Only after parity approval, use the release sync script to copy `frontend/build` into `public/`.
+2. Confirm the dry-run reports success and `git status --short -- public` remains empty. `/phone` should serve the Svelte UI directly from `frontend/build/`; copying into `public/` is no longer required for the default UI and should be reserved for explicit deprecated-fallback maintenance.
 3. Start the Pi Phone server and load:
    - `/`
    - `/manifest.webmanifest`

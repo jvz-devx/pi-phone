@@ -14,8 +14,8 @@ const confirmed = args.has('--confirm');
 
 function usage() {
   console.error(`Usage:
-  npm run frontend:sync-public:dry-run  # build frontend and validate release copy preconditions
-  npm run frontend:sync-public          # build frontend, back up public/, replace public/ with frontend/build
+  npm run frontend:sync-public:dry-run  # build frontend and validate deprecated public fallback sync preconditions
+  npm run frontend:sync-public          # build frontend, back up public/, replace deprecated public fallback with frontend/build
 
 Direct usage:
   node scripts/release-sveltekit-public.mjs --dry-run
@@ -103,7 +103,7 @@ try {
   validateStaticFallbackContract();
 
   if (dryRun) {
-    console.log('Dry run complete: public/ was not modified.');
+    console.log('Dry run complete: public/ was not modified. Runtime serving uses frontend/build when present.');
     process.exit(0);
   }
 

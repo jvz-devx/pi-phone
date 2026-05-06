@@ -1,14 +1,14 @@
 # SvelteKit frontend migration
 
-This branch (`svelte`) stages a SvelteKit replacement for the current static Pi Phone frontend. The runtime server still serves `public/` as the production UI, and `public/` must remain untouched until manual parity testing explicitly approves the cutover.
+This branch (`svelte`) stages a SvelteKit replacement for the old static Pi Phone frontend. The runtime server now serves `frontend/build/` as the primary UI when that SvelteKit build is present and valid. The legacy `public/` app is deprecated and retained only as a fallback if the Svelte build is missing; `public/` must remain untouched unless a reviewed legacy-fallback sync is explicitly requested.
 
 ## Branch status and safety rule
 
-- `frontend/` contains the in-progress SvelteKit app.
-- `public/` contains the current production static app and is intentionally retained.
+- `frontend/` contains the SvelteKit app, and `frontend/build/` is the default runtime static root after `npm run frontend:build`.
+- `public/` contains the deprecated static app and is intentionally retained as a legacy fallback only.
 - `frontend-legacy/public/` is a reference backup of the old static app.
 - Normal development commands must not write to `public/`.
-- The only supported way to replace `public/` is the guarded release-copy script documented below.
+- The guarded public sync script is now only for maintaining the deprecated fallback copy, not for making Svelte the default runtime UI.
 
 Before any release copy, verify that `git status --short -- public` is empty. If `public/` is dirty, stop and investigate instead of overwriting it.
 
@@ -24,7 +24,7 @@ npm run frontend:build
 npm run frontend:preview
 ```
 
-`npm run frontend:build` runs Vite/SvelteKit with `@sveltejs/adapter-static` and writes to `frontend/build/`. This is deliberately separate from `public/` so routine checks, tests, and builds cannot replace the production static app by accident.
+`npm run frontend:build` runs Vite/SvelteKit with `@sveltejs/adapter-static` and writes to `frontend/build/`. This is deliberately separate from `public/` so routine checks, tests, and builds cannot replace the deprecated legacy fallback by accident.
 
 The root test flow currently keeps this separation:
 
@@ -36,7 +36,7 @@ npm run frontend:build
 
 These commands may update ignored frontend build/cache output, but they should not touch `public/`.
 
-## Release copy into `public/`
+## Deprecated fallback sync into `public/`
 
 The root release helper is:
 
@@ -66,7 +66,7 @@ npm run frontend:sync-public
 3. copies `frontend/build/` into `public/`;
 4. asks the releaser to review the resulting git diff before committing.
 
-Do not wire this script into `npm test`, `npm run frontend:build`, package install hooks, or any automatic CI/build step. It is a manual release cutover action only.
+Do not wire this script into `npm test`, `npm run frontend:build`, package install hooks, or any automatic CI/build step. It is a manual legacy-fallback maintenance action only; Svelte is served directly from `frontend/build/` when available.
 
 ## Runtime static fallback contract
 
@@ -78,9 +78,10 @@ Do not wire this script into `npm test`, `npm run frontend:build`, package insta
    - `GET|HEAD /api/quota`;
    - any other `/api/*` path returns JSON `404` instead of falling through to the SPA fallback.
 2. WebSocket traffic is unaffected by static serving because upgrades are handled by `server.on("upgrade")`; only `/ws` is accepted, then origin/token checks run before `ws.handleUpgrade(...)`.
-3. Static paths are sanitized against `public/` before file reads.
-4. Missing static `GET`/`HEAD` paths fall back to `public/index.html`, matching the SvelteKit `adapter-static` setting `fallback: 'index.html'`.
-5. `mimeTypes` covers the SvelteKit output currently produced in `frontend/build/`, including `_app/immutable` JavaScript/CSS chunks and KaTeX font files (`.woff`, `.woff2`, `.ttf`).
+3. Static paths are sanitized against the active static root before file reads.
+4. The active root is `frontend/build/` when it contains `index.html` and SvelteKit `_app/` assets; otherwise it falls back to deprecated `public/`.
+5. Missing static `GET`/`HEAD` paths fall back to the active root's `index.html`, matching the SvelteKit `adapter-static` setting `fallback: 'index.html'`.
+6. `mimeTypes` covers the SvelteKit output currently produced in `frontend/build/`, including `_app/immutable` JavaScript/CSS chunks and KaTeX font files (`.woff`, `.woff2`, `.ttf`).
 
 The lightweight checks below verify the source ordering, adapter-static configuration, WebSocket upgrade separation, SPA fallback, MIME coverage, PWA manifest/service-worker behavior, and release-script guardrails. If `frontend/build/` exists, they also scan the built file extensions and app-shell asset references.
 
@@ -107,9 +108,9 @@ frontend/build/
 
 ## Legacy archive/removal policy
 
-Do not remove files from `public/` while the SvelteKit app is still being validated. `public/` remains the runtime UI until a release cutover explicitly copies `frontend/build/` there.
+Do not remove files from `public/` while the SvelteKit app is still being validated. `public/` no longer needs to be the runtime UI by default; it remains as a deprecated fallback for installs that have not produced `frontend/build/` yet.
 
-`frontend-legacy/public/` is the tracked archive of the original static frontend and remains the behavioral/visual reference during parity testing. After SvelteKit fully replaces `public/`, the old static modules under `public/app/`, `public/app.js`, and `public/styles.css` may be removed from `public/` only as part of the same reviewed cutover commit that installs the SvelteKit build output. Keep `frontend-legacy/public/` until maintainers decide it is no longer useful for regression comparison.
+`frontend-legacy/public/` is the tracked archive of the original static frontend and remains the behavioral/visual reference during parity testing. The old static modules under `public/app/`, `public/app.js`, and `public/styles.css` may be removed from `public/` only as part of a later reviewed cleanup that intentionally drops the deprecated fallback. Keep `frontend-legacy/public/` until maintainers decide it is no longer useful for regression comparison.
 
 ## Component usage
 
@@ -167,13 +168,13 @@ The SvelteKit UI should adapt Pi envelopes into typed stores and component props
 2. Port `public/app/transport.js` into the typed transport layer.
 3. Port rendering from `public/app/messages.js` and `public/app/tool-rendering.js` into Svelte components.
 4. Port composer, attachments, autocomplete, local commands, remote slash commands, sheets, dialogs, and extension UI requests.
-5. Keep building to `frontend/build/` and compare against `public/` plus `frontend-legacy/public/`.
-6. Run the dry-run release script.
-7. Only after manual parity approval, run `npm run frontend:sync-public`, review the diff, and commit the release cutover.
+5. Keep building to `frontend/build/`; runtime serving should use that build by default and compare behavior against deprecated `public/` plus `frontend-legacy/public/`.
+6. Run the dry-run legacy fallback sync script if fallback maintenance is desired.
+7. Only if maintainers still want the deprecated fallback copy refreshed, run `npm run frontend:sync-public`, review the diff, and commit that fallback-maintenance change.
 
 ## Manual parity caveat
 
-Automated type checks and fixture tests are useful, but they are not sufficient for cutover. Before replacing `public/`, manually verify token login, WebSocket reconnect, prompt streaming, abort/steer/follow-up, attachments and inline tokens, local and remote slash commands, autocomplete, model/thinking pickers, parent/parallel sessions, saved sessions, tree browsing, tool previews, extension UI requests, quota/context display, mobile safe-area behavior, desktop layout, and static/PWA asset loading through the existing Pi Phone server.
+Automated type checks and fixture tests are useful, but they are not sufficient for parity sign-off. Before relying on the Svelte runtime UI broadly, manually verify token login, WebSocket reconnect, prompt streaming, abort/steer/follow-up, attachments and inline tokens, local and remote slash commands, autocomplete, model/thinking pickers, parent/parallel sessions, saved sessions, tree browsing, tool previews, extension UI requests, quota/context display, mobile safe-area behavior, desktop layout, and static/PWA asset loading through the existing Pi Phone server.
 
 For Steps 54-63, use `docs/sveltekit-validation-steps-54-63.md`. During development, the SvelteKit dev server can exercise the live `/phone-start` backend without touching `public/` by setting `PI_PHONE_BACKEND`, for example:
 

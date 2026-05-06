@@ -120,7 +120,7 @@ assertNotIncludes(serviceWorker, '"/app/', 'Svelte service worker must not preca
 
 assertIncludes(runtime, 'if (url.pathname === "/api/quota")', 'PhoneServerRuntime must keep /api/quota before static fallback.');
 assertIncludes(runtime, 'if (url.pathname.startsWith("/api/"))', 'PhoneServerRuntime must keep unknown /api/* out of SPA fallback.');
-assertIncludes(runtime, 'publicFilePath("index.html")', 'PhoneServerRuntime must keep SPA index fallback for static routes.');
+assertIncludes(runtime, 'staticIndexFilePath()', 'PhoneServerRuntime must keep SPA index fallback for the active Svelte-first static root.');
 assertIncludes(runtime, 'url.pathname !== "/ws"', 'PhoneServerRuntime must keep WebSocket upgrades scoped to /ws.');
 
 const buildDir = join(repoRoot, 'frontend/build');

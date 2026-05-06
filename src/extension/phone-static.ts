@@ -1,10 +1,16 @@
+import { existsSync } from "node:fs";
 import { fileURLToPath } from "node:url";
-import { dirname, join, normalize, resolve } from "node:path";
+import { dirname, join, normalize, resolve, sep } from "node:path";
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = dirname(__filename);
 
-export const publicDir = resolve(__dirname, "../../public");
+export const svelteBuildDir = resolve(__dirname, "../../frontend/build");
+export const legacyPublicDir = resolve(__dirname, "../../public");
+/** @deprecated Legacy static fallback. Prefer `activeStaticDir()` / `sanitizeStaticPath()`. */
+export const publicDir = legacyPublicDir;
+
+export type PhoneStaticSource = "svelte-build" | "legacy-public";
 
 export const mimeTypes: Record<string, string> = {
   ".css": "text/css; charset=utf-8",
@@ -21,13 +27,43 @@ export const mimeTypes: Record<string, string> = {
   ".woff2": "font/woff2",
 };
 
-export function sanitizePublicPath(pathname: string): string | null {
+function isInsideRoot(filePath: string, root: string) {
+  return filePath === root || filePath.startsWith(`${root}${sep}`);
+}
+
+function safeStaticPath(root: string, pathname: string): string | null {
   const normalized = normalize(pathname).replace(/^\/+/, "");
-  const filePath = resolve(publicDir, normalized === "" ? "index.html" : normalized);
-  if (!filePath.startsWith(publicDir)) return null;
+  const filePath = resolve(root, normalized === "" ? "index.html" : normalized);
+  if (!isInsideRoot(filePath, root)) return null;
   return filePath;
 }
 
+export function isSvelteBuildAvailable(root = svelteBuildDir) {
+  return existsSync(join(root, "index.html")) && existsSync(join(root, "_app"));
+}
+
+export function activeStaticSource(): PhoneStaticSource {
+  return isSvelteBuildAvailable() ? "svelte-build" : "legacy-public";
+}
+
+export function activeStaticDir(): string {
+  return activeStaticSource() === "svelte-build" ? svelteBuildDir : legacyPublicDir;
+}
+
+export function sanitizeStaticPath(pathname: string): string | null {
+  return safeStaticPath(activeStaticDir(), pathname);
+}
+
+export function staticIndexFilePath(): string {
+  return join(activeStaticDir(), "index.html");
+}
+
+/** @deprecated Legacy name retained for compatibility; resolves against the active Svelte-first static root. */
+export function sanitizePublicPath(pathname: string): string | null {
+  return sanitizeStaticPath(pathname);
+}
+
+/** @deprecated Legacy name retained for compatibility; resolves against deprecated `public/` only. */
 export function publicFilePath(relativePath: string): string {
-  return join(publicDir, relativePath);
+  return join(legacyPublicDir, relativePath);
 }

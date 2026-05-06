@@ -55,10 +55,17 @@ assertOrdered(runtime, [
   ['quota API route', 'if (url.pathname === "/api/quota")'],
   ['unknown API guard', 'url.pathname.startsWith("/api/")'],
   ['static method guard', 'if (req.method !== "GET" && req.method !== "HEAD")'],
-  ['static path sanitation', 'sanitizePublicPath(pathname)'],
-  ['SPA index fallback', 'publicFilePath("index.html")'],
+  ['static path sanitation', 'sanitizeStaticPath(pathname)'],
+  ['SPA index fallback', 'staticIndexFilePath()'],
 ]);
 
+assert.match(staticModule, /svelteBuildDir\s*=\s*resolve\(__dirname, "\.\.\/\.\.\/frontend\/build"\)/, 'SvelteKit build output must be the primary static root.');
+assert.match(staticModule, /legacyPublicDir\s*=\s*resolve\(__dirname, "\.\.\/\.\.\/public"\)/, 'Deprecated public/ must remain available as a legacy fallback root.');
+assert.match(staticModule, /function isSvelteBuildAvailable[\s\S]*index\.html[\s\S]*_app/, 'Svelte-first serving should require a valid frontend/build output.');
+assert.match(staticModule, /function activeStaticSource[\s\S]*isSvelteBuildAvailable\(\)[\s\S]*"svelte-build"[\s\S]*"legacy-public"/, 'Svelte build must be preferred over deprecated public/ when available.');
+assert.match(staticModule, /function sanitizeStaticPath[\s\S]*safeStaticPath\(activeStaticDir\(\), pathname\)/, 'Static path sanitation must resolve against the active Svelte-first static root.');
+assert.match(staticModule, /function safeStaticPath[\s\S]*normalize\(pathname\)[\s\S]*resolve\(root[\s\S]*isInsideRoot/, 'Static path sanitation must keep traversal checks for every active root.');
+assert.doesNotMatch(runtime, /publicFilePath\("index\.html"\)/, 'Runtime SPA fallback should use the active Svelte-first static index, not public/ directly.');
 assert.match(runtime, /this\.server\.on\("upgrade"/, 'WebSocket handling must stay on the HTTP upgrade path.');
 assert.match(runtime, /url\.pathname !== "\/ws"/, 'Only /ws should be accepted for WebSocket upgrades.');
 assert.match(runtime, /activeWss\.handleUpgrade\(req, socket, head/, 'Accepted /ws upgrades should be delegated to ws.handleUpgrade.');
