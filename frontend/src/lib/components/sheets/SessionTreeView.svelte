@@ -2,7 +2,7 @@
   import GitBranch from '@lucide/svelte/icons/git-branch';
   import GitFork from '@lucide/svelte/icons/git-fork';
   import RotateCw from '@lucide/svelte/icons/rotate-cw';
-  import { forkSessionEntry, openBranchPath, refreshSessionTree, type PhoneSessionActionClient } from '$lib/actions/phone-commands';
+  import { forkSessionEntry, openBranchPath, parentCommandControlsAvailable, refreshSessionTree, treeBelongsToCurrentSession, type PhoneSessionActionClient } from '$lib/actions/phone-commands';
   import { mapTreeNodes, treeFileLabel } from '$lib/adapters/sheet-adapter';
   import { phoneClient } from '$lib/pi-phone-transport';
   import { piPhoneState, type PhoneStateStore } from '$lib/stores/pi-phone-state';
@@ -26,16 +26,26 @@
   let tree = $derived(appState.tree);
   let nodes = $derived(mapTreeNodes(tree));
   let loading = $derived(!tree && ['health-loading', 'connecting', 'reconnecting'].includes(appState.connection.connectionState));
+  let treeActionsAvailable = $derived(parentCommandControlsAvailable(appState) && treeBelongsToCurrentSession(appState));
+  let treeActionUnavailableTitle = $derived(
+    !parentCommandControlsAvailable(appState)
+      ? 'Run /phone-status in the terminal, then refresh to recapture command controls.'
+      : !treeBelongsToCurrentSession(appState)
+        ? 'Refresh the session tree for the current session before using branch actions.'
+        : undefined,
+  );
 
   function refresh() {
     refreshSessionTree({ client });
   }
 
   function openPath(node: TreeListNode) {
+    if (!treeActionsAvailable) return;
     openBranchPath(node.id, { store: stateStore, client });
   }
 
   function forkHere(node: TreeListNode) {
+    if (!treeActionsAvailable) return;
     forkSessionEntry(node.id, { store: stateStore, client });
   }
 
@@ -129,12 +139,12 @@
                 <p class="mt-2 whitespace-pre-wrap text-xs leading-5 text-muted-foreground">{node.preview}</p>
 
                 <div class="mt-3 flex flex-wrap gap-2">
-                  <Button variant="secondary" size="xs" onclick={() => openPath(node)} class="gap-1.5">
+                  <Button variant="secondary" size="xs" onclick={() => openPath(node)} class="gap-1.5" disabled={!treeActionsAvailable} title={treeActionUnavailableTitle}>
                     <GitBranch class="size-3" aria-hidden="true" />
                     Open path
                   </Button>
                   {#if canFork(node)}
-                    <Button variant="outline" size="xs" onclick={() => forkHere(node)} class="gap-1.5">
+                    <Button variant="outline" size="xs" onclick={() => forkHere(node)} class="gap-1.5" disabled={!treeActionsAvailable} title={treeActionUnavailableTitle}>
                       <GitFork class="size-3" aria-hidden="true" />
                       Fork here
                     </Button>

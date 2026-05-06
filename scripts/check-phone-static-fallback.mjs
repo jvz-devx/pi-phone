@@ -40,6 +40,7 @@ async function collectFileExtensions(directory) {
 }
 
 const runtime = await readRepoFile('src/extension/phone-server-runtime.ts');
+const parentWorker = await readRepoFile('src/session-pool/parent-session-worker.ts');
 const staticModule = await readRepoFile('src/extension/phone-static.ts');
 const themeModule = await readRepoFile('src/extension/phone-theme.ts');
 const svelteConfig = await readRepoFile('frontend/svelte.config.js');
@@ -71,6 +72,15 @@ assert.match(runtime, /url\.pathname !== "\/ws"/, 'Only /ws should be accepted f
 assert.match(runtime, /activeWss\.handleUpgrade\(req, socket, head/, 'Accepted /ws upgrades should be delegated to ws.handleUpgrade.');
 assert.match(runtime, /buildThemePayload\(this\.latestCtx\?\.ui\?\.theme\)/, 'Status health responses must tolerate contexts without a ui theme object.');
 assert.match(themeModule, /function themeColorToCss[\s\S]*try \{[\s\S]*theme\.getFgAnsi[\s\S]*catch \{[\s\S]*return "";/, 'Theme payload extraction must tolerate Pi themes without every requested color token.');
+assert.match(runtime, /async recaptureParentCommandContext\(ctx: ExtensionCommandContext\)[\s\S]*this\.captureCtx\(ctx\)[\s\S]*await this\.parentWorker\.captureContext\(ctx, \{ emitSnapshot: true, emitCatalog: true \}\)[\s\S]*this\.sessionPool\?\.broadcastCatalog\(\)[\s\S]*this\.broadcastStatus\(\)/, '/phone-status command-context recapture must refresh parent snapshot, catalog, and status.');
+assert.match(runtime, /async handlePhoneStatus\(ctx: ExtensionCommandContext\) \{\s*await this\.recaptureParentCommandContext\(ctx\);/, '/phone-status must use explicit parent command-context recapture before reporting status.');
+assert.match(runtime, /ensureParentCommandContextForRpc\(ws: WebSocket, worker: SessionController, command: string, id\?: unknown\)[\s\S]*worker\.kind !== "parent" \|\| this\.latestCommandCtx[\s\S]*sendRpcFailure/, 'Parent mutating RPC commands must fail before side effects when command context is unavailable.');
+assert.match(runtime, /if \(command\.type === "phone_open_branch_path"\) \{[\s\S]*try \{[\s\S]*createBranchSessionFromEntryForWorker[\s\S]*\} catch \(error\)[\s\S]*sendRpcFailure\(ws, "phone_open_branch_path"/, 'Open path must preflight/report errors before branch switch side effects leak to the UI.');
+assert.match(runtime, /const childCommand: Record<string, unknown> = \{[\s\S]*type: "prompt"[\s\S]*message: slashCommand\.text[\s\S]*source: slashCommand\.source[\s\S]*slashCommand\.path[\s\S]*slashCommand\.location[\s\S]*slashCommand\.sourceInfoPath/, 'Resolved remote slash command identity must be forwarded to parent/parallel workers.');
+assert.match(parentWorker, /private async preparePromptText\(text: string, identity\?: SlashCommandIdentity \| null\)[\s\S]*this\.activeCommands\(\)\.filter\(\(entry: any\) => entry\?\.name === parsed\.name\)[\s\S]*this\.commandMatchesIdentity\(entry, identity\)[\s\S]*Ambiguous slash command/, 'Parent worker prompt preparation must use exact slash command identity and fail safely on ambiguity.');
+assert.match(parentWorker, /private async submitPrompt\([\s\S]*identity\?: SlashCommandIdentity \| null[\s\S]*preparePromptText\(String\(message \|\| ""\), identity\)/, 'Parent worker submitPrompt must carry slash command identity into prompt expansion.');
+assert.match(parentWorker, /source: command\.source[\s\S]*path: command\.path[\s\S]*location: command\.location[\s\S]*sourceInfoPath: command\.sourceInfoPath/, 'Parent worker request handling must pass prompt command identity fields into submitPrompt.');
+assert.match(parentWorker, /captureContext\(ctx: ExtensionContext \| ExtensionCommandContext, options: \{ emitSnapshot\?: boolean; emitCatalog\?: boolean \} = \{\}\)[\s\S]*options\.emitCatalog[\s\S]*this\.options\.onStateChange\(\)/, 'Parent worker captureContext must honor emitCatalog so recaptured command contexts reach active sessions.');
 assert.match(runtime, /if \(!res\.headersSent\) \{\s*res\.writeHead\(500,/s, 'HTTP error handling must not send duplicate response headers.');
 
 const healthRouteIndex = runtime.indexOf('if (url.pathname === "/api/health")');

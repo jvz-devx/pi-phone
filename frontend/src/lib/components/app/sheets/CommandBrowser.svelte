@@ -4,6 +4,8 @@
   import Plus from '@lucide/svelte/icons/plus';
   import {
     commandCategoryLabel,
+    commandIdentity,
+    commandIdentityKey,
     groupedCommands,
     handleInsertOnlyLocalCommand,
     sendRemoteSlashCommand,
@@ -101,8 +103,16 @@
 
   function runRemoteCommand(command: PhoneCommand) {
     if (!command.name) return;
+    const identity = commandIdentity(command);
     const result = sendRemoteSlashCommand(
-      { name: command.name, text: `/${command.name}`, source: command.source || 'extension' },
+      {
+        name: command.name,
+        text: `/${command.name}`,
+        source: identity.source,
+        ...(identity.path ? { path: identity.path } : {}),
+        ...(identity.location ? { location: identity.location } : {}),
+        ...(identity.sourceInfoPath ? { sourceInfoPath: identity.sourceInfoPath } : {}),
+      },
       { store: stateStore, client },
     );
     if (result === 'handled') closeSheet();
@@ -168,7 +178,7 @@
         </div>
       {/if}
 
-      {#each activeCommands as command (`${command.source || 'command'}:${command.name}`)}
+      {#each activeCommands as command (commandIdentityKey(command))}
         <Card.Root class="bg-card/80">
           <Card.Content class="flex items-start gap-3 p-3">
             <div class="min-w-0 flex-1">

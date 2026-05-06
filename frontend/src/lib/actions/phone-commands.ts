@@ -79,6 +79,9 @@ export type ParsedSlashCommand = {
 
 export type RemoteSlashCommand = ParsedSlashCommand & {
   source: PhoneCommandSource;
+  path?: string;
+  location?: string;
+  sourceInfoPath?: string;
 };
 
 export function parseLocalCommandInput(text: string): ParsedLocalCommand | null {
@@ -113,7 +116,27 @@ export function localCommandCatalog(): PhoneCommand[] {
 }
 
 function compareCommandNames(left: PhoneCommand, right: PhoneCommand) {
-  return String(left?.name || '').localeCompare(String(right?.name || ''));
+  const nameCompare = String(left?.name || '').localeCompare(String(right?.name || ''));
+  if (nameCompare) return nameCompare;
+  return commandIdentityKey(left).localeCompare(commandIdentityKey(right));
+}
+
+export function commandIdentity(command: PhoneCommand | RemoteSlashCommand | null | undefined) {
+  return {
+    source: command?.source || 'extension',
+    path: typeof command?.path === 'string' ? command.path : '',
+    location: typeof command?.location === 'string' ? command.location : '',
+    sourceInfoPath: typeof (command as PhoneCommand | undefined)?.sourceInfo?.path === 'string'
+      ? String((command as PhoneCommand).sourceInfo?.path)
+      : typeof (command as RemoteSlashCommand | undefined)?.sourceInfoPath === 'string'
+        ? String((command as RemoteSlashCommand).sourceInfoPath)
+        : '',
+  };
+}
+
+export function commandIdentityKey(command: PhoneCommand | RemoteSlashCommand | null | undefined) {
+  const identity = commandIdentity(command);
+  return [identity.source, command?.name || '', identity.path, identity.location, identity.sourceInfoPath].join('\0');
 }
 
 export function sortCommandCategories(categories: string[] = []) {
@@ -139,6 +162,23 @@ export function visibleCommandCatalog(commands: PhoneCommand[] = piPhoneState.sn
   return [...localCommands, ...commands.filter((command) => !localNames.has(command.name))];
 }
 
+export function remoteSlashCommandMatches(text: string, commands: PhoneCommand[] = piPhoneState.snapshot().commands.available) {
+  const parsed = parseSlashCommandText(text);
+  if (!parsed) return [];
+  return commands.filter((command) => command.name === parsed.name);
+}
+
+function toRemoteSlashCommand(parsed: ParsedSlashCommand, command: PhoneCommand): RemoteSlashCommand {
+  const identity = commandIdentity(command);
+  return {
+    ...parsed,
+    source: identity.source,
+    ...(identity.path ? { path: identity.path } : {}),
+    ...(identity.location ? { location: identity.location } : {}),
+    ...(identity.sourceInfoPath ? { sourceInfoPath: identity.sourceInfoPath } : {}),
+  };
+}
+
 export function groupedCommands(commands: PhoneCommand[] = piPhoneState.snapshot().commands.available) {
   const groups = new Map<string, PhoneCommand[]>();
 
@@ -156,9 +196,13 @@ export function findRemoteSlashCommand(text: string, commands: PhoneCommand[] = 
   const parsed = parseSlashCommandText(text);
   if (!parsed) return null;
 
-  const match = commands.find((command) => command.name === parsed.name);
-  if (!match) return null;
-  return { ...parsed, source: match.source || 'extension' };
+  const matches = remoteSlashCommandMatches(text, commands);
+  if (matches.length !== 1) return null;
+  return toRemoteSlashCommand(parsed, matches[0]);
+}
+
+export function isAmbiguousRemoteSlashCommand(text: string, commands: PhoneCommand[] = piPhoneState.snapshot().commands.available) {
+  return remoteSlashCommandMatches(text, commands).length > 1;
 }
 
 export function shouldBlockUnresolvedSlashCommand(text: string, state: PhoneAppState = piPhoneState.snapshot()) {
@@ -242,6 +286,37 @@ function markRefreshRequested(store: PhoneStateStore, forceQuota = false) {
   });
 }
 
+function clearSessionScopedViews(store: PhoneStateStore) {
+  store.clearPendingUiRequest();
+  store.clearSnapshotView();
+  store.setStats(null);
+  store.setTree(null);
+}
+
+function blockParentCommandControlsUnavailable(
+  actionLabel: string,
+  options: { store: PhoneStateStore; client: PhoneCommandActionClient },
+): CommandDispatchResult {
+  if (parentCommandControlsAvailable(options.store.snapshot())) return false;
+
+  notify(options.store, `${actionLabel} is unavailable until Pi provides a fresh command context. Run /phone-status in the terminal, then refresh.`, 'error');
+  options.client.refreshAll();
+  markRefreshRequested(options.store);
+  return 'blocked';
+}
+
+function blockStaleTreeAction(
+  options: { store: PhoneStateStore; client: PhoneCommandActionClient },
+): CommandDispatchResult {
+  const state = options.store.snapshot();
+  if (treeBelongsToCurrentSession(state)) return false;
+
+  notify(options.store, 'This session tree is stale. Refresh the tree for the current session before using branch actions.', 'warning');
+  options.client.sendRpc({ type: 'phone_get_tree' });
+  options.store.setTree(null);
+  return 'blocked';
+}
+
 function clearSubmittedPrompt(store: PhoneStateStore) {
   store.setComposerText('');
   store.clearAutocomplete();
@@ -280,7 +355,7 @@ export function requestThinkingLevelSwitch(
   const sent = client.sendRpc({ type: 'set_thinking_level', level });
   if (!sent) return 'blocked';
 
-  store.setSheetOpen(false);
+  notify(store, `Thinking level change requested: ${level}.`, 'info');
   return 'handled';
 }
 
@@ -299,7 +374,7 @@ export function requestModelSwitch(
   if (!sent) return 'blocked';
 
   markForcedQuotaRefresh(store);
-  store.setSheetOpen(false);
+  notify(store, `Model change requested: ${model.name || model.id}.`, 'info');
   return 'handled';
 }
 
@@ -326,7 +401,11 @@ export function tryHandleLocalCommand(
     return 'blocked';
   }
 
-  if (name === 'new') return client.sendRpc({ type: 'new_session' }) ? 'handled' : 'blocked';
+  if (name === 'new') {
+    const blocked = blockParentCommandControlsUnavailable('New session', { store, client });
+    if (blocked) return blocked;
+    return client.sendRpc({ type: 'new_session' }) ? 'handled' : 'blocked';
+  }
   if (name === 'compact') return client.sendRpc({ type: 'compact' }) ? 'handled' : 'blocked';
   if (name === 'reload') return client.requestReload(store.snapshot()) ? 'handled' : 'blocked';
   if (name === 'refresh') {
@@ -403,9 +482,14 @@ export function sendRemoteSlashCommand(
 
   const snapshot = store.snapshot();
   const behavior = command.source !== 'extension' ? streamingBehaviorForSubmit(snapshot, Boolean(options.steer)) : undefined;
+  const identity = commandIdentity(command);
   const localCommand: PiPhoneLocalCommand = {
     type: 'slash-command',
     text: command.text,
+    source: identity.source,
+    ...(identity.path ? { path: identity.path } : {}),
+    ...(identity.location ? { location: identity.location } : {}),
+    ...(identity.sourceInfoPath ? { sourceInfoPath: identity.sourceInfoPath } : {}),
     ...(images.length ? { images } : {}),
     ...(behavior ? { streamingBehavior: behavior } : {}),
   };
@@ -427,6 +511,8 @@ export async function submitPrompt(
   const store = options.store || piPhoneState;
   const client = options.client || phoneClient;
   const steer = Boolean(options.steer);
+
+  if (store.snapshot().composer.isSubmitting) return { status: 'blocked' };
 
   store.updateComposer({ isSubmitting: true });
   try {
@@ -456,7 +542,13 @@ export async function submitPrompt(
 
     const message = promptPayload.message.trim();
     const images = promptPayload.images;
-    const remoteSlashCommand = message ? findRemoteSlashCommand(message, store.snapshot().commands.available) : null;
+    const commandCatalog = store.snapshot().commands.available;
+    if (message && isAmbiguousRemoteSlashCommand(message, commandCatalog)) {
+      notify(store, `Multiple slash commands match ${parseSlashCommandText(message)?.text || message}. Use Commands → Run now to choose a source.`, 'error');
+      return { status: 'blocked', command: message };
+    }
+
+    const remoteSlashCommand = message ? findRemoteSlashCommand(message, commandCatalog) : null;
     if (remoteSlashCommand) {
       const remoteCommandResult = sendRemoteSlashCommand(remoteSlashCommand, { store, client, images, steer });
       if (remoteCommandResult) {
@@ -519,6 +611,13 @@ export function parentCommandControlsAvailable(state: PhoneAppState = piPhoneSta
   return !(activeParentUnavailable || selectedParentUnavailable);
 }
 
+export function treeBelongsToCurrentSession(state: PhoneAppState = piPhoneState.snapshot()) {
+  const treeFile = String(state.tree?.sessionFile || '').trim();
+  if (!treeFile) return false;
+  const currentFile = String(state.snapshot.state?.sessionFile || '').trim();
+  return Boolean(currentFile && currentFile === treeFile);
+}
+
 export function selectActiveSession(
   sessionId: string,
   options: { store?: PhoneStateStore; client?: PhoneSessionActionClient } = {},
@@ -530,8 +629,7 @@ export function selectActiveSession(
   const sent = client.sendSessionSelect(sessionId);
   if (!sent) return false;
 
-  store.clearPendingUiRequest();
-  store.clearSnapshotView();
+  clearSessionScopedViews(store);
   store.setFollowLatest(true);
   return true;
 }
@@ -550,8 +648,7 @@ export function startNewParentSession(options: { store?: PhoneStateStore; client
   const sent = client.sendParentSessionNew();
   if (!sent) return false;
 
-  store.clearPendingUiRequest();
-  store.clearSnapshotView();
+  clearSessionScopedViews(store);
   store.setFollowLatest(true);
   notify(store, 'Starting new parent session…');
   return true;
@@ -563,8 +660,7 @@ export function spawnParallelSession(options: { store?: PhoneStateStore; client?
   const sent = client.sendSessionSpawn();
   if (!sent) return false;
 
-  store.clearPendingUiRequest();
-  store.clearSnapshotView();
+  clearSessionScopedViews(store);
   store.setFollowLatest(true);
   notify(store, 'Opening new parallel session…');
   return true;
@@ -579,11 +675,13 @@ export function switchSavedSession(
   const cleanPath = String(sessionPath || '').trim();
   if (!cleanPath) return false;
 
+  const blocked = blockParentCommandControlsUnavailable('Switch session', { store, client });
+  if (blocked) return false;
+
   const sent = client.sendRpc({ type: 'switch_session', sessionPath: cleanPath });
   if (!sent) return false;
 
-  store.clearPendingUiRequest();
-  store.clearSnapshotView();
+  clearSessionScopedViews(store);
   store.setFollowLatest(true);
   notify(store, 'Switching saved session…');
   return true;
@@ -598,9 +696,14 @@ export function forkSessionEntry(
   const cleanEntryId = String(entryId || '').trim();
   if (!cleanEntryId) return false;
 
+  const blocked = blockParentCommandControlsUnavailable('Fork session', { store, client }) || blockStaleTreeAction({ store, client });
+  if (blocked) return false;
+
   const sent = client.sendRpc({ type: 'fork', entryId: cleanEntryId });
   if (!sent) return false;
 
+  store.setTree(null);
+  store.setStats(null);
   notify(store, 'Forking selected session point…');
   markRefreshRequested(store, true);
   return true;
@@ -615,11 +718,13 @@ export function openBranchPath(
   const cleanEntryId = String(entryId || '').trim();
   if (!cleanEntryId) return false;
 
+  const blocked = blockParentCommandControlsUnavailable('Open branch path', { store, client }) || blockStaleTreeAction({ store, client });
+  if (blocked) return false;
+
   const sent = client.sendRpc({ type: 'phone_open_branch_path', entryId: cleanEntryId });
   if (!sent) return false;
 
-  store.clearPendingUiRequest();
-  store.clearSnapshotView();
+  clearSessionScopedViews(store);
   store.setFollowLatest(true);
   notify(store, 'Opening branch path…');
   return true;
@@ -645,7 +750,11 @@ export function runPhoneQuickAction(
     markRefreshRequested(store);
     return true;
   }
-  if (action === 'new-session') return client.sendRpc({ type: 'new_session' });
+  if (action === 'new-session') {
+    const blocked = blockParentCommandControlsUnavailable('New session', { store, client });
+    if (blocked) return false;
+    return client.sendRpc({ type: 'new_session' });
+  }
   if (action === 'compact') return client.sendRpc({ type: 'compact' });
   if (action === 'stats') {
     openPhoneSheet('actions', { store, client });

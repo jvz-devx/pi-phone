@@ -23,6 +23,13 @@ import { contentToPreviewText, shortId } from "./utils";
 
 const INLINE_IMAGE_TOKEN_PATTERN = /⟦img\d+⟧|\{img\d*\}/g;
 
+type SlashCommandIdentity = {
+  source?: unknown;
+  path?: unknown;
+  location?: unknown;
+  sourceInfoPath?: unknown;
+};
+
 function parseSlashCommandText(text: string) {
   const value = String(text || "").trim();
   if (!value.startsWith("/")) return null;
@@ -397,17 +404,50 @@ export class PhoneParentSessionWorker implements SessionController {
     return Array.isArray(this.lastCommands) && this.lastCommands.length > 0 ? this.lastCommands : this.pi.getCommands();
   }
 
+  private commandIdentity(command: any) {
+    return {
+      source: typeof command?.source === "string" && command.source ? command.source : "extension",
+      path: typeof command?.path === "string" ? command.path : "",
+      location: typeof command?.location === "string" ? command.location : "",
+      sourceInfoPath: typeof command?.sourceInfo?.path === "string" ? command.sourceInfo.path : "",
+    };
+  }
+
+  private normalizedSlashCommandIdentity(identity?: SlashCommandIdentity | null) {
+    return {
+      source: typeof identity?.source === "string" ? identity.source : "",
+      path: typeof identity?.path === "string" ? identity.path : "",
+      location: typeof identity?.location === "string" ? identity.location : "",
+      sourceInfoPath: typeof identity?.sourceInfoPath === "string" ? identity.sourceInfoPath : "",
+    };
+  }
+
+  private hasSlashCommandIdentity(identity?: SlashCommandIdentity | null) {
+    const normalized = this.normalizedSlashCommandIdentity(identity);
+    return Boolean(normalized.source || normalized.path || normalized.location || normalized.sourceInfoPath);
+  }
+
+  private commandMatchesIdentity(command: any, identity?: SlashCommandIdentity | null) {
+    const requested = this.normalizedSlashCommandIdentity(identity);
+    const commandIdentity = this.commandIdentity(command);
+    return (!requested.source || commandIdentity.source === requested.source)
+      && (!requested.path || commandIdentity.path === requested.path)
+      && (!requested.location || commandIdentity.location === requested.location)
+      && (!requested.sourceInfoPath || commandIdentity.sourceInfoPath === requested.sourceInfoPath);
+  }
+
   private commandSourcePath(command: any) {
-    if (typeof command?.sourceInfo?.path === "string" && command.sourceInfo.path) {
-      return command.sourceInfo.path;
+    const identity = this.commandIdentity(command);
+    if (identity.sourceInfoPath) {
+      return identity.sourceInfoPath;
     }
 
-    if (typeof command?.path === "string" && command.path) {
-      return command.path;
+    if (identity.path) {
+      return identity.path;
     }
 
-    if (typeof command?.location === "string" && command.location) {
-      const location = command.location;
+    if (identity.location) {
+      const location = identity.location;
       const looksLikePath = isAbsolute(location) || location.includes("/") || location.includes("\\");
       if (looksLikePath && existsSync(location)) {
         return location;
@@ -435,23 +475,38 @@ export class PhoneParentSessionWorker implements SessionController {
     return parsed.args ? `${skillBlock}\n\n${parsed.args}` : skillBlock;
   }
 
-  private async preparePromptText(text: string) {
+  private async preparePromptText(text: string, identity?: SlashCommandIdentity | null) {
     const parsed = parseSlashCommandText(text);
     if (!parsed) return text;
 
-    const command = this.activeCommands().find((entry: any) => entry?.name === parsed.name);
-    if (!command) return text;
+    const candidates = this.activeCommands().filter((entry: any) => entry?.name === parsed.name);
+    if (!candidates.length) return text;
 
-    if (command.source === "extension") {
+    const hasIdentity = this.hasSlashCommandIdentity(identity);
+    const matches = hasIdentity
+      ? candidates.filter((entry: any) => this.commandMatchesIdentity(entry, identity))
+      : candidates;
+
+    if (!matches.length) {
+      throw new Error(`Slash command identity no longer matches ${parsed.text}. Refresh commands and choose the command source again.`);
+    }
+
+    if (matches.length > 1) {
+      throw new Error(`Ambiguous slash command: ${parsed.text}. Choose the exact command source from the phone command browser.`);
+    }
+
+    const command = matches[0];
+    const commandIdentity = this.commandIdentity(command);
+    if (commandIdentity.source === "extension") {
       throw new Error("Extension slash commands are not supported while mirroring the live CLI session. Open a parallel session to use them.");
     }
 
     const sourcePath = this.commandSourcePath(command);
-    if (command.source === "prompt" && sourcePath) {
+    if (commandIdentity.source === "prompt" && sourcePath) {
       return this.expandPromptTemplate(text, sourcePath);
     }
 
-    if (command.source === "skill" && sourcePath) {
+    if (commandIdentity.source === "skill" && sourcePath) {
       const skillName = parsed.name.replace(/^skill:/, "") || parsed.name;
       return this.expandSkillCommand(text, sourcePath, skillName);
     }
@@ -459,7 +514,7 @@ export class PhoneParentSessionWorker implements SessionController {
     return text;
   }
 
-  private async submitPrompt(message: string, images: unknown[] = [], streamingBehavior?: "steer" | "followUp") {
+  private async submitPrompt(message: string, images: unknown[] = [], streamingBehavior?: "steer" | "followUp", identity?: SlashCommandIdentity | null) {
     const ctx = this.currentCtx();
     if (!ctx) {
       throw new Error("Live CLI session context is not available yet.");
@@ -468,7 +523,7 @@ export class PhoneParentSessionWorker implements SessionController {
       throw new Error("Agent is already processing. Specify streamingBehavior ('steer' or 'followUp') to queue the message.");
     }
 
-    const text = await this.preparePromptText(String(message || ""));
+    const text = await this.preparePromptText(String(message || ""), identity);
     const normalizedImages = Array.isArray(images)
       ? images.filter((image: any) => image?.type === "image" && image.data && image.mimeType)
       : [];
@@ -654,11 +709,21 @@ export class PhoneParentSessionWorker implements SessionController {
       }
 
       if (type === "prompt") {
-        await this.submitPrompt(String(command.message || ""), Array.isArray(command.images) ? command.images : [], command.streamingBehavior === "steer"
-          ? "steer"
-          : command.streamingBehavior === "followUp"
-            ? "followUp"
-            : undefined);
+        await this.submitPrompt(
+          String(command.message || ""),
+          Array.isArray(command.images) ? command.images : [],
+          command.streamingBehavior === "steer"
+            ? "steer"
+            : command.streamingBehavior === "followUp"
+              ? "followUp"
+              : undefined,
+          {
+            source: command.source,
+            path: command.path,
+            location: command.location,
+            sourceInfoPath: command.sourceInfoPath,
+          },
+        );
         return this.buildResponse(id, type, true);
       }
 
@@ -809,21 +874,23 @@ export class PhoneParentSessionWorker implements SessionController {
     } as any;
   }
 
-  captureContext(ctx: ExtensionContext | ExtensionCommandContext, options: { emitSnapshot?: boolean; emitCatalog?: boolean } = {}) {
+  async captureContext(ctx: ExtensionContext | ExtensionCommandContext, options: { emitSnapshot?: boolean; emitCatalog?: boolean } = {}) {
     this.cwd = ctx.sessionManager.getCwd();
-    Promise.resolve(this.refreshCachedSnapshotFromContext(ctx))
-      .then(() => {
-        this.touch();
-        if (options.emitSnapshot) {
-          this.emitSnapshot();
-        }
-      })
-      .catch((error) => {
-        const message = error instanceof Error ? error.message : String(error);
-        this.lastError = message;
-        this.lastErrorFromCommandContextUnavailable = this.isCommandContextUnavailableError(message);
+    try {
+      await this.refreshCachedSnapshotFromContext(ctx);
+      this.touch();
+      if (options.emitSnapshot) {
+        this.emitSnapshot();
+      }
+      if (options.emitCatalog) {
         this.options.onStateChange();
-      });
+      }
+    } catch (error) {
+      const message = error instanceof Error ? error.message : String(error);
+      this.lastError = message;
+      this.lastErrorFromCommandContextUnavailable = this.isCommandContextUnavailableError(message);
+      this.options.onStateChange();
+    }
   }
 
   markCommandContextUnavailable(message: string) {

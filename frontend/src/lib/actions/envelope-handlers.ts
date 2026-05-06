@@ -354,25 +354,35 @@ function applyResponseSuccess(state: PhoneAppState, payload: PhoneRpcResponse & 
 
     case 'set_model':
       setNotification(state, 'Model updated.');
+      if (state.sheets.mode === 'models') state.sheets.open = false;
       requestRefresh(state, { forceQuota: true });
       return;
 
     case 'set_thinking_level':
       setNotification(state, 'Thinking level updated.');
+      if (state.sheets.mode === 'thinking') state.sheets.open = false;
       requestRefresh(state);
       return;
 
     case 'switch_session':
+      clearSnapshotView(state);
+      state.stats = null;
+      state.tree = null;
       setNotification(state, 'Session switched.');
       requestRefresh(state);
       return;
 
     case 'fork':
+      state.stats = null;
+      state.tree = null;
       setNotification(state, 'Fork created.');
       requestRefresh(state);
       return;
 
     case 'phone_open_branch_path':
+      clearSnapshotView(state);
+      state.stats = null;
+      state.tree = null;
       setNotification(state, 'Opened selected branch path as a new session.');
       requestRefresh(state);
       return;
@@ -535,7 +545,11 @@ function handleSessionCatalog(state: PhoneAppState, catalog: PhoneSessionCatalog
   state.sessions.active = catalog?.sessions || [];
   state.sessions.activeSessionId = nextActiveSessionId || null;
 
-  if (activeSessionChanged) discardPendingUiRequest(state);
+  if (activeSessionChanged) {
+    discardPendingUiRequest(state);
+    state.stats = null;
+    state.tree = null;
+  }
 
   if (activeSessionChanged && state.snapshot.workerId && state.snapshot.workerId !== state.sessions.activeSessionId) {
     clearSnapshotView(state);

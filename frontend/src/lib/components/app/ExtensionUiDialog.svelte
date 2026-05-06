@@ -39,6 +39,7 @@
   let responding = $state(false);
   let draft = $state('');
   let selectedValue = $state('');
+  let selectedOptionIndex = $state(-1);
   let inputRef = $state<HTMLInputElement | null>(null);
   let selectRef = $state<HTMLSelectElement | null>(null);
 
@@ -85,7 +86,8 @@
       activeDialogKey = nextRequestKey;
       responding = false;
       draft = extensionUiDraftValue(nextState, nextRequest);
-      selectedValue = nextOptions[0] || '';
+      selectedOptionIndex = nextOptions.length ? 0 : -1;
+      selectedValue = nextOptions[0] ?? '';
       dialogOpen = true;
       void tick().then(() => {
         if (nextRequest.method === 'input') inputRef?.focus();
@@ -126,8 +128,8 @@
     respond({ id: request.id, value: draft });
   }
 
-  function submitSelect(value = selectedValue) {
-    if (!request || request.id == null || !value) return;
+  function submitSelect(value = selectedValue, hasSelection = selectedOptionIndex >= 0) {
+    if (!request || request.id == null || !hasSelection) return;
     respond({ id: request.id, value });
   }
 
@@ -146,13 +148,19 @@
   }
 
   function handleSelectChange(event: Event) {
-    selectedValue = (event.currentTarget as HTMLSelectElement).value;
+    const select = event.currentTarget as HTMLSelectElement;
+    selectedOptionIndex = select.selectedIndex;
+    selectedValue = options[selectedOptionIndex] ?? '';
+  }
+
+  function optionLabel(option: string) {
+    return option === '' ? '(empty string)' : option;
   }
 </script>
 
 {#if showStatusPanel}
   <aside
-    class="fixed inset-x-3 bottom-[calc(env(safe-area-inset-bottom)+5.5rem)] z-30 mx-auto max-w-xl rounded-2xl border border-primary/20 bg-card/95 p-3 text-card-foreground shadow-md backdrop-blur sm:inset-x-auto sm:right-4 sm:w-80"
+    class="pointer-events-none fixed inset-x-3 bottom-[calc(env(safe-area-inset-bottom)+5.5rem)] z-30 mx-auto max-w-xl rounded-2xl border border-primary/20 bg-card/95 p-3 text-card-foreground shadow-md backdrop-blur sm:inset-x-auto sm:right-4 sm:w-80"
     aria-label="Extension status"
     aria-live="polite"
     role="status"
@@ -226,17 +234,17 @@
                   id="extension-select-input"
                   bind:this={selectRef}
                   class="h-11 w-full rounded-xl border bg-background px-3 text-sm outline-none ring-ring transition focus:ring-2"
-                  value={selectedValue}
+                  value={String(selectedOptionIndex)}
                   onchange={handleSelectChange}
                   aria-label="Extension request options"
                 >
-                  {#each options as option}
-                    <option value={option}>{option}</option>
+                  {#each options as option, index}
+                    <option value={String(index)}>{optionLabel(option)}</option>
                   {/each}
                 </select>
                 <div class="grid gap-2 sm:grid-cols-2">
                   {#each options as option}
-                    <Button type="button" variant="secondary" class="justify-start" onclick={() => submitSelect(option)} aria-label={`Choose ${option}`}>{option}</Button>
+                    <Button type="button" variant="secondary" class="justify-start" onclick={() => submitSelect(option, true)} aria-label={`Choose ${optionLabel(option)}`}>{optionLabel(option)}</Button>
                   {/each}
                 </div>
               {:else}
@@ -244,7 +252,7 @@
               {/if}
               <div class="flex justify-end gap-2 border-t pt-4">
                 <Button type="button" variant="outline" onclick={cancelRequest} aria-label="Cancel extension select request">Cancel</Button>
-                <Button type="submit" disabled={!selectedValue} aria-label="Submit selected extension option">Submit</Button>
+                <Button type="submit" disabled={selectedOptionIndex < 0} aria-label="Submit selected extension option">Submit</Button>
               </div>
             </form>
           {:else if request.method === 'input'}

@@ -9,7 +9,7 @@
   import History from '@lucide/svelte/icons/history';
   import GitBranch from '@lucide/svelte/icons/git-branch';
   import PanelsTopLeft from '@lucide/svelte/icons/panels-top-left';
-  import { runPhoneQuickAction, type PhoneQuickAction, type PhoneSessionActionClient } from '$lib/actions/phone-commands';
+  import { parentCommandControlsAvailable, runPhoneQuickAction, type PhoneQuickAction, type PhoneSessionActionClient } from '$lib/actions/phone-commands';
   import { phoneClient } from '$lib/pi-phone-transport';
   import { piPhoneState, type PhoneStateStore } from '$lib/stores/pi-phone-state';
   import type { PhoneStats } from '$lib/types/pi-phone';
@@ -54,6 +54,7 @@
   let snapshot = $derived(appState.snapshot.state);
   let modelLabel = $derived(snapshot?.model?.name || snapshot?.model?.id || 'Default');
   let thinkingLabel = $derived(snapshot?.thinkingLevel || '—');
+  let parentControlsAvailable = $derived(parentCommandControlsAvailable(appState));
 
   function formatNumber(value: number | null | undefined) {
     return Number.isFinite(value) ? Number(value).toLocaleString() : '—';
@@ -75,7 +76,17 @@
     ];
   }
 
+  function actionDisabled(action: PhoneQuickAction) {
+    return action === 'new-session' && !parentControlsAvailable;
+  }
+
+  function actionTitle(action: QuickActionConfig) {
+    if (actionDisabled(action.id)) return `${action.description} Run /phone-status in the terminal, then refresh to recapture command controls.`;
+    return action.description;
+  }
+
   function runAction(action: PhoneQuickAction) {
+    if (actionDisabled(action)) return;
     runPhoneQuickAction(action, { store: stateStore, client });
   }
 </script>
@@ -142,6 +153,8 @@
           variant={action.primary ? 'secondary' : 'outline'}
           class="h-auto justify-start gap-3 rounded-2xl px-3 py-3 text-left"
           onclick={() => runAction(action.id)}
+          disabled={actionDisabled(action.id)}
+          title={actionTitle(action)}
           aria-label={`${action.label}: ${action.description}`}
         >
           <Icon class="size-4 shrink-0 text-muted-foreground" aria-hidden="true" />

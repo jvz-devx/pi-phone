@@ -57,6 +57,9 @@ type SlashCommandMatch = {
   text: string;
   name: string;
   source: string;
+  path?: string;
+  location?: string;
+  sourceInfoPath?: string;
 };
 
 const DEFAULT_IDLE_TIMEOUT_MS = 2 * 60 * 60_000;
@@ -275,12 +278,26 @@ export class PhoneServerRuntime {
   private captureReplacementCtx(ctx: ExtensionCommandContext) {
     const restoredCommandCtx = this.captureCtx(ctx);
     this.syncCwdFromCtx(ctx);
-    this.parentWorker?.captureContext(ctx, { emitSnapshot: true, emitCatalog: true });
+    void this.parentWorker?.captureContext(ctx, { emitSnapshot: true, emitCatalog: true });
     if (!restoredCommandCtx) {
       this.sessionPool?.broadcastCatalog();
     }
     this.updateStatusUi(ctx);
     this.broadcastStatus();
+  }
+
+  private async recaptureParentCommandContext(ctx: ExtensionCommandContext) {
+    this.captureCtx(ctx);
+    this.syncCwdFromCtx(ctx);
+
+    if (this.server && this.parentWorker && this.latestCommandCtx) {
+      await this.parentWorker.captureContext(ctx, { emitSnapshot: true, emitCatalog: true });
+      // `/phone-status` is the documented command-context recovery path. Force a
+      // fresh catalog/status broadcast after the parent snapshot refresh so mobile
+      // controls such as New Parent unlock immediately without a server restart.
+      this.sessionPool?.broadcastCatalog();
+      this.broadcastStatus();
+    }
   }
 
   private clearCommandCtxForReplacement(reason: SessionStartReason | SessionShutdownReason, ctx?: ExtensionContext, phase: "start" | "shutdown" = "start") {
@@ -458,8 +475,11 @@ export class PhoneServerRuntime {
     return createBranchSessionFromEntry(sessionFile, entryId);
   }
 
-  private async resolveRemoteSlashCommandForWorker(worker: SessionController, text: unknown): Promise<SlashCommandMatch | null> {
-    const parsed = parseSlashCommandText(text);
+  private async resolveRemoteSlashCommandForWorker(
+    worker: SessionController,
+    input: { text: unknown; source?: unknown; path?: unknown; location?: unknown; sourceInfoPath?: unknown },
+  ): Promise<SlashCommandMatch | null> {
+    const parsed = parseSlashCommandText(input.text);
     if (!parsed) return null;
 
     const commandsResponse = await worker.request({ type: "get_commands" });
@@ -467,12 +487,39 @@ export class PhoneServerRuntime {
       throw new Error(commandsResponse?.error || "Failed to read available slash commands.");
     }
 
-    const match = (commandsResponse.data?.commands || []).find((command: any) => command?.name === parsed.name);
-    if (!match) return null;
+    const requestedSource = typeof input.source === "string" ? input.source : "";
+    const requestedPath = typeof input.path === "string" ? input.path : "";
+    const requestedLocation = typeof input.location === "string" ? input.location : "";
+    const requestedSourceInfoPath = typeof input.sourceInfoPath === "string" ? input.sourceInfoPath : "";
+    const candidates = (commandsResponse.data?.commands || []).filter((command: any) => command?.name === parsed.name);
+    const matches = candidates.filter((command: any) => {
+      const source = typeof command.source === "string" ? command.source : "extension";
+      const path = typeof command.path === "string" ? command.path : "";
+      const location = typeof command.location === "string" ? command.location : "";
+      const sourceInfoPath = typeof command.sourceInfo?.path === "string" ? command.sourceInfo.path : "";
+      return (!requestedSource || source === requestedSource)
+        && (!requestedPath || path === requestedPath)
+        && (!requestedLocation || location === requestedLocation)
+        && (!requestedSourceInfoPath || sourceInfoPath === requestedSourceInfoPath);
+    });
+
+    if (!matches.length) return null;
+    if (matches.length > 1) {
+      throw new Error(`Ambiguous slash command: ${parsed.text}. Choose the exact command source from the phone command browser.`);
+    }
+
+    const match = matches[0];
+    const source = typeof match.source === "string" ? match.source : "extension";
+    const path = typeof match.path === "string" ? match.path : "";
+    const location = typeof match.location === "string" ? match.location : "";
+    const sourceInfoPath = typeof match.sourceInfo?.path === "string" ? match.sourceInfo.path : "";
 
     return {
       ...parsed,
-      source: typeof match.source === "string" ? match.source : "extension",
+      source,
+      ...(path ? { path } : {}),
+      ...(location ? { location } : {}),
+      ...(sourceInfoPath ? { sourceInfoPath } : {}),
     };
   }
 
@@ -483,6 +530,10 @@ export class PhoneServerRuntime {
       text: string;
       images?: unknown[];
       streamingBehavior?: "steer" | "followUp";
+      source?: unknown;
+      path?: unknown;
+      location?: unknown;
+      sourceInfoPath?: unknown;
     },
     options: {
       responseCommand?: string;
@@ -491,7 +542,7 @@ export class PhoneServerRuntime {
       onError?: (payload?: unknown) => void;
     } = {},
   ) {
-    const slashCommand = await this.resolveRemoteSlashCommandForWorker(worker, input.text);
+    const slashCommand = await this.resolveRemoteSlashCommandForWorker(worker, input);
     if (!slashCommand) {
       this.send(ws, {
         channel: "rpc",
@@ -522,6 +573,10 @@ export class PhoneServerRuntime {
     const childCommand: Record<string, unknown> = {
       type: "prompt",
       message: slashCommand.text,
+      source: slashCommand.source,
+      ...(slashCommand.path ? { path: slashCommand.path } : {}),
+      ...(slashCommand.location ? { location: slashCommand.location } : {}),
+      ...(slashCommand.sourceInfoPath ? { sourceInfoPath: slashCommand.sourceInfoPath } : {}),
     };
 
     if (images.length > 0) {
@@ -538,6 +593,9 @@ export class PhoneServerRuntime {
       responseData: {
         name: slashCommand.name,
         source: slashCommand.source,
+        ...(slashCommand.path ? { path: slashCommand.path } : {}),
+        ...(slashCommand.location ? { location: slashCommand.location } : {}),
+        ...(slashCommand.sourceInfoPath ? { sourceInfoPath: slashCommand.sourceInfoPath } : {}),
         ...(options.responseData || {}),
       },
       onSuccess: options.onSuccess,
@@ -578,6 +636,46 @@ export class PhoneServerRuntime {
     if (!this.parentBusy() && this.selectedSession()?.kind !== "parent") {
       this.setControlOwner("cli");
     }
+  }
+
+  private commandContextUnavailableMessage() {
+    return "Parent session command controls are unavailable until you run /phone-status in the terminal to recapture a fresh command context.";
+  }
+
+  private sendRpcFailure(ws: WebSocket, command: string, error: string, id?: unknown, data?: Record<string, unknown>) {
+    this.send(ws, {
+      channel: "rpc",
+      payload: {
+        type: "response",
+        command,
+        success: false,
+        error,
+        ...(data ? { data } : {}),
+        ...(id ? { id } : {}),
+      },
+    });
+  }
+
+  private ensureParentCommandContextForRpc(ws: WebSocket, worker: SessionController, command: string, id?: unknown) {
+    if (worker.kind !== "parent" || this.latestCommandCtx) return true;
+
+    const message = this.commandContextUnavailableMessage();
+    this.parentWorker?.markCommandContextUnavailable(message);
+    this.sendRpcFailure(ws, command, message, id);
+    this.broadcast({ channel: "server", event: "command-controls-unavailable", data: { message } });
+    this.broadcastStatus();
+    return false;
+  }
+
+  private ensureParentCommandContextForSessionCommand(ws: WebSocket, worker: SessionController) {
+    if (worker.kind !== "parent" || this.latestCommandCtx) return true;
+
+    const message = this.commandContextUnavailableMessage();
+    this.parentWorker?.markCommandContextUnavailable(message);
+    this.send(ws, { channel: "server", event: "client-error", data: { message } });
+    this.broadcast({ channel: "server", event: "command-controls-unavailable", data: { message } });
+    this.broadcastStatus();
+    return false;
   }
 
   private async ensurePhoneCanWrite(ws: WebSocket, worker: SessionController) {
@@ -1294,7 +1392,7 @@ export class PhoneServerRuntime {
       if (!worker || worker.kind !== "parent") {
         throw new Error("Parent session is not available.");
       }
-      if (!(await this.ensurePhoneCanWrite(ws, worker))) {
+      if (!(await this.ensurePhoneCanWrite(ws, worker)) || !this.ensureParentCommandContextForSessionCommand(ws, worker)) {
         return;
       }
       await this.sessionPool.selectSession(ws, worker.id);
@@ -1439,6 +1537,10 @@ export class PhoneServerRuntime {
         try {
           await this.dispatchRemoteSlashCommandForWorker(worker, ws, {
             text: String(message.command.text || ""),
+            source: typeof message.command.source === "string" ? message.command.source : undefined,
+            path: typeof message.command.path === "string" ? message.command.path : undefined,
+            location: typeof message.command.location === "string" ? message.command.location : undefined,
+            sourceInfoPath: typeof message.command.sourceInfoPath === "string" ? message.command.sourceInfoPath : undefined,
             images: Array.isArray(message.command.images) ? message.command.images : [],
             streamingBehavior: message.command.streamingBehavior === "steer"
               ? "steer"
@@ -1506,8 +1608,10 @@ export class PhoneServerRuntime {
     }
 
     const readOnlyCommandTypes = new Set(["get_state", "get_messages", "get_commands", "get_available_models", "get_session_stats", "phone_get_tree", "phone_list_sessions"]);
-    if (!readOnlyCommandTypes.has(String(command.type || "")) && !(await this.ensurePhoneCanWrite(ws, worker))) {
-      return;
+    const commandType = String(command.type || "");
+    if (!readOnlyCommandTypes.has(commandType)) {
+      if (!(await this.ensurePhoneCanWrite(ws, worker))) return;
+      if (!this.ensureParentCommandContextForRpc(ws, worker, commandType, command.id)) return;
     }
 
     if (command.type === "phone_get_tree") {
@@ -1526,7 +1630,14 @@ export class PhoneServerRuntime {
     }
 
     if (command.type === "phone_open_branch_path") {
-      const nextPath = await this.createBranchSessionFromEntryForWorker(worker, String(command.entryId || ""));
+      let nextPath = "";
+      try {
+        nextPath = await this.createBranchSessionFromEntryForWorker(worker, String(command.entryId || ""));
+      } catch (error) {
+        this.sendRpcFailure(ws, "phone_open_branch_path", error instanceof Error ? error.message : String(error), command.id);
+        return;
+      }
+
       const switchResponse = await worker.request({ type: "switch_session", sessionPath: nextPath });
       if (!switchResponse?.success) {
         this.send(ws, {
@@ -1738,7 +1849,7 @@ export class PhoneServerRuntime {
   }
 
   async handlePhoneStatus(ctx: ExtensionCommandContext) {
-    this.captureCtx(ctx);
+    await this.recaptureParentCommandContext(ctx);
     this.updateStatusUi(ctx);
     ctx.ui.notify(this.statusText(), this.server ? "info" : "warning");
 

@@ -51,6 +51,7 @@
   let text = $state('');
   let promptInputAttachments = $state<PromptInputAttachmentData[]>([]);
   let selectedSuggestionIndex = $state(-1);
+  let suppressAutocompleteSync = false;
   let cleanupBeforeUnload: (() => void) | null = null;
   let unsubscribeComposer: (() => void) | null = null;
   let appState = $derived($stateStore);
@@ -84,6 +85,11 @@
   }
 
   function syncAutocomplete() {
+    if (suppressAutocompleteSync) {
+      stateStore.clearAutocomplete();
+      return;
+    }
+
     const cursor = textarea?.selectionStart ?? text.length;
     const context = updateAutocomplete(text, cursor, { store: stateStore, client });
     if (!context) selectedSuggestionIndex = -1;
@@ -105,16 +111,21 @@
       client,
     });
     if (!result.handled) return;
+    suppressAutocompleteSync = true;
     text = result.text;
     selectedSuggestionIndex = -1;
+    stateStore.clearAutocomplete();
     scheduleCursor({ cursor: result.cursor });
+    void tick().then(() => {
+      suppressAutocompleteSync = false;
+    });
   }
 
   function handleComposerKeydown(event: KeyboardEvent) {
     const items = appState.autocomplete.items;
     if ((event.metaKey || event.ctrlKey) && event.key === 'Enter' && !event.isComposing) {
       event.preventDefault();
-      void handleSubmit(false);
+      if (!appState.composer.isSubmitting) void handleSubmit(false);
       return;
     }
 
@@ -149,6 +160,7 @@
   }
 
   async function handleSubmit(steer = false) {
+    if (stateStore.snapshot().composer.isSubmitting) return;
     stateStore.setComposerText(text);
     const result = await submitPrompt({ store: stateStore, client, steer });
     if (result.status === 'sent' || result.status === 'handled') {
@@ -159,7 +171,7 @@
   }
 
   function handlePromptSubmit() {
-    if (!canSubmit) return;
+    if (!canSubmit || appState.composer.isSubmitting) return;
     void handleSubmit(false);
   }
 
@@ -169,7 +181,7 @@
   }
 
   function handleSteer() {
-    if (!steerVisible) return;
+    if (!steerVisible || appState.composer.isSubmitting) return;
     void handleSubmit(true);
   }
 

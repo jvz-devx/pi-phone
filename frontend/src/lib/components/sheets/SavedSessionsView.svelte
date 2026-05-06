@@ -1,8 +1,7 @@
 <script lang="ts">
   import RotateCw from '@lucide/svelte/icons/rotate-cw';
-  import GitFork from '@lucide/svelte/icons/git-fork';
-  import { forkSessionEntry, refreshSavedSessions, switchSavedSession, type PhoneSessionActionClient } from '$lib/actions/phone-commands';
-  import { groupSavedSessions, savedSessionForkEntryId, savedSessionPreview, savedSessionSubtitle, savedSessionTitle } from '$lib/adapters/sheet-adapter';
+  import { parentCommandControlsAvailable, refreshSavedSessions, switchSavedSession, type PhoneSessionActionClient } from '$lib/actions/phone-commands';
+  import { groupSavedSessions, savedSessionPreview, savedSessionSubtitle, savedSessionTitle } from '$lib/adapters/sheet-adapter';
   import { phoneClient } from '$lib/pi-phone-transport';
   import { piPhoneState, type PhoneStateStore } from '$lib/stores/pi-phone-state';
   import type { PhoneSavedSession } from '$lib/types/pi-phone';
@@ -25,19 +24,15 @@
   let groups = $derived(groupSavedSessions(appState.sessions.saved));
   let activeFile = $derived(appState.snapshot.state?.sessionFile || '');
   let loading = $derived(!appState.sessions.saved.length && ['health-loading', 'connecting', 'reconnecting'].includes(appState.connection.connectionState));
+  let canSwitchSavedSession = $derived(parentCommandControlsAvailable(appState));
 
   function refresh() {
     refreshSavedSessions({ client });
   }
 
   function switchSession(session: PhoneSavedSession) {
+    if (!canSwitchSavedSession) return;
     switchSavedSession(session.path, { store: stateStore, client });
-  }
-
-  function forkSaved(session: PhoneSavedSession) {
-    const entryId = savedSessionForkEntryId(session);
-    if (!entryId) return;
-    forkSessionEntry(entryId, { store: stateStore, client });
   }
 
   function isCurrent(session: PhoneSavedSession) {
@@ -72,7 +67,6 @@
 
         <div class="grid gap-2">
           {#each group.sessions as session (session.path)}
-            {@const forkEntryId = savedSessionForkEntryId(session)}
             <article class={cn('rounded-2xl border bg-background/45 p-3', isCurrent(session) && 'border-primary/50 bg-primary/10')}>
               <div class="flex items-start justify-between gap-3">
                 <button
@@ -80,6 +74,8 @@
                   class="min-w-0 flex-1 text-left focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
                   onclick={() => switchSession(session)}
                   aria-current={isCurrent(session) ? 'page' : undefined}
+                  aria-disabled={!canSwitchSavedSession}
+                  title={!canSwitchSavedSession ? 'Run /phone-status in the terminal, then refresh to recapture command controls.' : undefined}
                 >
                   <div class="flex min-w-0 flex-wrap items-center gap-1.5">
                     <span class="truncate text-sm font-semibold">{savedSessionTitle(session)}</span>
@@ -100,13 +96,13 @@
                 </button>
 
                 <div class="flex shrink-0 flex-col gap-1.5">
-                  <Button variant="secondary" size="xs" onclick={() => switchSession(session)}>Switch</Button>
-                  {#if forkEntryId}
-                    <Button variant="outline" size="xs" onclick={() => forkSaved(session)} class="gap-1.5" title="Fork from the saved session entry exposed by the server">
-                      <GitFork class="size-3" aria-hidden="true" />
-                      Fork
-                    </Button>
-                  {/if}
+                  <Button
+                    variant="secondary"
+                    size="xs"
+                    onclick={() => switchSession(session)}
+                    disabled={!canSwitchSavedSession}
+                    title={!canSwitchSavedSession ? 'Run /phone-status in the terminal, then refresh to recapture command controls.' : undefined}
+                  >Switch</Button>
                 </div>
               </div>
             </article>

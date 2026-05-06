@@ -38,9 +38,11 @@ import {
   canSteer,
   openBranchPath,
   parentCommandControlsAvailable,
+  treeBelongsToCurrentSession,
   requestModelSwitch,
   requestThinkingLevelSwitch,
   runPhoneQuickAction,
+  isAmbiguousRemoteSlashCommand,
   selectActiveSession,
   sendRemoteSlashCommand,
   spawnParallelSession,
@@ -1084,7 +1086,8 @@ function testCommandDispatchActions() {
   thinkingPickerStore.setSheetMode('thinking', { open: true });
   assert.equal(requestThinkingLevelSwitch('medium', { store: thinkingPickerStore, client }), 'handled');
   assert.deepEqual(rpc.at(-1), { type: 'set_thinking_level', level: 'medium' });
-  assert.equal(thinkingPickerStore.snapshot().sheets.open, false, 'thinking picker action closes after dispatch');
+  assert.equal(thinkingPickerStore.snapshot().sheets.open, true, 'thinking picker stays open while the backend confirms the change');
+  assert.match(thinkingPickerStore.snapshot().feedback.toasts.at(-1)?.text || '', /Thinking level change requested/);
 
   store.setModels([{ provider: 'openai-codex', id: 'gpt-5-codex', name: 'GPT 5 Codex' }]);
   assert.equal(tryHandleLocalCommand('/model openai-codex/gpt-5-codex', { store, client }), 'handled');
@@ -1101,7 +1104,8 @@ function testCommandDispatchActions() {
     'handled',
   );
   assert.deepEqual(rpc.at(-1), { type: 'set_model', provider: 'openai-codex', modelId: 'gpt-5-codex' });
-  assert.equal(modelPickerStore.snapshot().sheets.open, false, 'model picker action closes after dispatch');
+  assert.equal(modelPickerStore.snapshot().sheets.open, true, 'model picker stays open while the backend confirms the change');
+  assert.match(modelPickerStore.snapshot().feedback.toasts.at(-1)?.text || '', /Model change requested/);
   assert.equal(modelPickerStore.snapshot().quota.forceRefresh, true, 'model picker action requests forced quota refresh');
   assert.equal(modelPickerStore.snapshot().connection.forceQuotaRefreshRequested, true, 'model picker action marks transport quota refresh');
 
@@ -1110,14 +1114,18 @@ function testCommandDispatchActions() {
   assert.match(store.snapshot().feedback.toasts.at(-1)?.text || '', /Model not found locally/);
 
   resetGlobalState();
+  piPhoneState.setSheetMode('models', { open: true });
   handleRpcPayload({ type: 'response', command: 'set_model', success: true, data: { provider: 'openai-codex', id: 'gpt-5-codex', name: 'GPT 5 Codex' } });
   assert.match(piPhoneState.snapshot().feedback.toasts.at(-1)?.text || '', /Model updated/);
+  assert.equal(piPhoneState.snapshot().sheets.open, false, 'model picker closes once the backend confirms success');
   assert.equal(piPhoneState.snapshot().quota.forceRefresh, true, 'model update responses force quota refresh');
   assert.equal(piPhoneState.snapshot().connection.forceQuotaRefreshRequested, true, 'model update responses mark transport quota refresh');
 
   resetGlobalState();
+  piPhoneState.setSheetMode('thinking', { open: true });
   handleRpcPayload({ type: 'response', command: 'set_thinking_level', success: true });
   assert.match(piPhoneState.snapshot().feedback.toasts.at(-1)?.text || '', /Thinking level updated/);
+  assert.equal(piPhoneState.snapshot().sheets.open, false, 'thinking picker closes once the backend confirms success');
   assert.equal(piPhoneState.snapshot().quota.forceRefresh, false, 'thinking-level updates refresh state without forcing quota');
 
   assert.equal(tryHandleLocalCommand('/cd /tmp', { store, client }), 'handled');
@@ -1252,17 +1260,42 @@ function testQuickActionAndSessionDispatchActions() {
   assert.deepEqual(local.at(-1), { kind: 'refreshAll', options: undefined });
   assert.equal(store.snapshot().connection.refreshRequested, true);
 
+  const rpcCountBeforeUnavailableActions = rpc.length;
+  assert.equal(runPhoneQuickAction('new-session', { store, client }), false, 'quick New session is blocked without parent command context');
+  assert.equal(switchSavedSession('  /tmp/session.jsonl  ', { store, client }), false, 'saved session switch is blocked without parent command context');
+  assert.equal(forkSessionEntry('entry-1', { store, client }), false, 'tree fork is blocked without parent command context');
+  assert.equal(openBranchPath('entry-2', { store, client }), false, 'tree open path is blocked without parent command context');
+  assert.equal(rpc.length, rpcCountBeforeUnavailableActions, 'blocked parent-replacement actions do not send RPC payloads');
+
+  store.setActiveSessions([{ ...store.snapshot().sessions.active[0], commandContextAvailable: true }], 'parent-1');
+  store.setStatus({ cwd: '/repo', hasToken: false, isRunning: true, host: '127.0.0.1', port: 3000, childRunning: true, isStreaming: false, isCompacting: false, lastError: '', childPid: null, sessionWorkerId: 'parent-1', sessionKind: 'parent', commandContextAvailable: true });
+  assert.equal(parentCommandControlsAvailable(store.snapshot()), true);
+
   assert.equal(switchSavedSession('  /tmp/session.jsonl  ', { store, client }), true);
   assert.deepEqual(rpc.at(-1), { type: 'switch_session', sessionPath: '/tmp/session.jsonl' }, 'saved session switch trims the selected session path');
+  assert.equal(store.snapshot().tree, null, 'saved session switch clears stale tree state');
+  assert.equal(store.snapshot().stats, null, 'saved session switch clears stale stats');
+
   const rpcCountBeforeBlankSessionAction = rpc.length;
   assert.equal(switchSavedSession('   ', { store, client }), false);
   assert.equal(forkSessionEntry('', { store, client }), false);
   assert.equal(openBranchPath('   ', { store, client }), false);
   assert.equal(rpc.length, rpcCountBeforeBlankSessionAction, 'blank saved-session/tree actions do not send RPC payloads');
 
+  store.setSnapshot({ model: null, isStreaming: false, isCompacting: false, sessionFile: '/repo/session-a.jsonl', sessionId: 'session-a', messageCount: 1, pendingMessageCount: 0 }, 'parent-1');
+  store.setTree({ sessionFile: '/repo/session-b.jsonl', currentLeafId: 'entry-stale', currentPathIds: ['entry-stale'], nodes: [] });
+  assert.equal(treeBelongsToCurrentSession(store.snapshot()), false);
+  const rpcCountBeforeStaleTreeAction = rpc.length;
+  assert.equal(openBranchPath('entry-stale', { store, client }), false, 'stale tree action is blocked and refreshed');
+  assert.deepEqual(rpc.at(-1), { type: 'phone_get_tree' }, 'stale tree action requests a fresh tree');
+  assert.equal(rpc.length, rpcCountBeforeStaleTreeAction + 1);
+
+  store.setTree({ sessionFile: '/repo/session-a.jsonl', currentLeafId: 'entry-2', currentPathIds: ['entry-1', 'entry-2'], nodes: [] });
+  assert.equal(treeBelongsToCurrentSession(store.snapshot()), true);
   assert.equal(forkSessionEntry('  entry-1  ', { store, client }), true);
   assert.deepEqual(rpc.at(-1), { type: 'fork', entryId: 'entry-1' }, 'fork trims the tree entry id');
 
+  store.setTree({ sessionFile: '/repo/session-a.jsonl', currentLeafId: 'entry-2', currentPathIds: ['entry-1', 'entry-2'], nodes: [] });
   assert.equal(openBranchPath('  entry-2  ', { store, client }), true);
   assert.deepEqual(rpc.at(-1), { type: 'phone_open_branch_path', entryId: 'entry-2' }, 'open branch path trims the tree entry id');
 }
@@ -1388,14 +1421,36 @@ async function testPromptSubmissionRules() {
   assert.equal(sendRemoteSlashCommand(remote, { store, client, images: [{ type: 'image', data: 'a', mimeType: 'image/png' }] }), 'blocked');
   assert.equal(local.length, 0, 'extension slash commands with images are not sent');
   assert.equal(sendRemoteSlashCommand(remote, { store, client }), 'handled');
-  assert.deepEqual(local.at(-1), { type: 'slash-command', text: '/ext run' });
+  assert.deepEqual(local.at(-1), { type: 'slash-command', text: '/ext run', source: 'extension' });
   assert.equal(store.snapshot().quota.forceRefresh, true, 'extension slash commands request a quota refresh');
 
   store.setComposerText('/ext from composer');
   const rpcCountBeforeExtensionSubmit = rpc.length;
   assert.equal((await submitPrompt({ store, client })).status, 'handled');
-  assert.deepEqual(local.at(-1), { type: 'slash-command', text: '/ext from composer' });
+  assert.deepEqual(local.at(-1), { type: 'slash-command', text: '/ext from composer', source: 'extension' });
   assert.equal(rpc.length, rpcCountBeforeExtensionSubmit, 'known extension slash commands never fall through to prompt RPC');
+
+  const duplicateCommands = [
+    { name: 'dup', source: 'extension' as const, path: '/repo/ext-a.ts' },
+    { name: 'dup', source: 'skill' as const, sourceInfo: { path: '/repo/skill-b.md' } },
+  ];
+  assert.equal(isAmbiguousRemoteSlashCommand('/dup run', duplicateCommands), true);
+  assert.equal(findRemoteSlashCommand('/dup run', duplicateCommands), null, 'plain composer lookup refuses ambiguous duplicate command names');
+  store.setCommands(duplicateCommands);
+  store.setComposerText('/dup run');
+  const localCountBeforeAmbiguous = local.length;
+  assert.equal((await submitPrompt({ store, client })).status, 'blocked');
+  assert.equal(local.length, localCountBeforeAmbiguous, 'ambiguous duplicate slash commands do not dispatch an arbitrary source');
+  assert.match(store.snapshot().feedback.toasts.at(-1)?.text || '', /Multiple slash commands/);
+
+  const duplicateRun = findRemoteSlashCommand('/dup run', [duplicateCommands[0]]);
+  assert.ok(duplicateRun);
+  assert.equal(sendRemoteSlashCommand({ ...duplicateRun, path: '/repo/ext-a.ts' }, { store, client }), 'handled');
+  assert.deepEqual(
+    local.at(-1),
+    { type: 'slash-command', text: '/dup run', source: 'extension', path: '/repo/ext-a.ts' },
+    'command browser run payload preserves command source identity for duplicate names',
+  );
 
   const unknownCatalogStore = createPiPhoneStateStore();
   unknownCatalogStore.setStatus({ cwd: '/repo', hasToken: false, isRunning: true, host: '127.0.0.1', port: 3000, childRunning: true, isStreaming: false, isCompacting: false, lastError: '', childPid: null, sessionWorkerId: 'worker', sessionKind: 'parallel' });
@@ -1430,11 +1485,17 @@ async function testPromptSubmissionRules() {
 
   store.setComposerText('/skill arg');
   assert.equal((await submitPrompt({ store, client })).status, 'handled');
-  assert.deepEqual(local.at(-1), { type: 'slash-command', text: '/skill arg', streamingBehavior: 'followUp' });
+  assert.deepEqual(local.at(-1), { type: 'slash-command', text: '/skill arg', source: 'skill', streamingBehavior: 'followUp' });
 
   store.setComposerText('/skill steer');
   assert.equal((await submitPrompt({ store, client, steer: true })).status, 'handled');
-  assert.deepEqual(local.at(-1), { type: 'slash-command', text: '/skill steer', streamingBehavior: 'steer' }, 'steered non-extension slash commands use steer streaming behavior');
+  assert.deepEqual(local.at(-1), { type: 'slash-command', text: '/skill steer', source: 'skill', streamingBehavior: 'steer' }, 'steered non-extension slash commands use steer streaming behavior');
+
+  store.updateComposer({ isSubmitting: true });
+  const rpcCountBeforeDoubleSubmit = rpc.length;
+  assert.equal((await submitPrompt({ store, client })).status, 'blocked', 'prompt submission is blocked while a submit is already in flight');
+  assert.equal(rpc.length, rpcCountBeforeDoubleSubmit, 'in-flight submit guard prevents duplicate RPC sends');
+  store.updateComposer({ isSubmitting: false });
 
   store.setComposerText('follow up');
   assert.equal((await submitPrompt({ store, client })).status, 'sent');

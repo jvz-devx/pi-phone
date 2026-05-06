@@ -676,7 +676,16 @@ export type PhoneLocalCommand =
   | 'reload'
   | { type: 'path-suggestions'; mode: PhonePathSuggestionMode; query: string; requestId: number }
   | { type: 'cd'; args: string }
-  | { type: 'slash-command'; text: string; images?: PhoneImageContent[]; streamingBehavior?: PhoneStreamingBehavior };
+  | {
+      type: 'slash-command';
+      text: string;
+      images?: PhoneImageContent[];
+      streamingBehavior?: PhoneStreamingBehavior;
+      source?: PhoneCommandSource;
+      path?: string;
+      location?: string;
+      sourceInfoPath?: string;
+    };
 
 export type PhoneClientMessage =
   | { kind: 'refresh' }
