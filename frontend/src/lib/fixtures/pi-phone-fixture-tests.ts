@@ -29,6 +29,7 @@ import { handleEnvelope, handleRpcPayload } from '$lib/actions/envelope-handlers
 import {
   findRemoteSlashCommand,
   forkSessionEntry,
+  abortGeneration,
   openBranchPath,
   runPhoneQuickAction,
   selectActiveSession,
@@ -57,7 +58,7 @@ import {
   parseNumberedDiffLines,
   splitToolNotice,
 } from '$lib/adapters/tool-adapter';
-import { PhoneAuthError } from '$lib/pi-phone-transport';
+import { PhoneAuthError, PhoneClient, readStoredToken, storeToken } from '$lib/pi-phone-transport';
 import { createPiPhoneStateStore, piPhoneState } from '$lib/stores/pi-phone-state';
 import type {
   PhoneAttachmentRecord,
@@ -93,6 +94,133 @@ function attachment(id: string, tokenOrder: number, token: string): PhoneAttachm
     url: `blob:${id}`,
     token,
     tokenOrder,
+  };
+}
+
+class FixtureLocalStorage {
+  private items = new Map<string, string>();
+
+  get length() {
+    return this.items.size;
+  }
+
+  key(index: number) {
+    return [...this.items.keys()][index] || null;
+  }
+
+  getItem(key: string) {
+    return this.items.has(key) ? this.items.get(key) || '' : null;
+  }
+
+  setItem(key: string, value: string) {
+    this.items.set(key, String(value));
+  }
+
+  removeItem(key: string) {
+    this.items.delete(key);
+  }
+
+  clear() {
+    this.items.clear();
+  }
+}
+
+class FixtureWebSocket {
+  static CONNECTING = 0;
+  static OPEN = 1;
+  static CLOSING = 2;
+  static CLOSED = 3;
+  static instances: FixtureWebSocket[] = [];
+
+  readyState = FixtureWebSocket.CONNECTING;
+  sent: string[] = [];
+  private listeners = new Map<string, Array<(event: unknown) => void>>();
+
+  constructor(readonly url: string) {
+    FixtureWebSocket.instances.push(this);
+  }
+
+  addEventListener(type: string, listener: (event: unknown) => void) {
+    this.listeners.set(type, [...(this.listeners.get(type) || []), listener]);
+  }
+
+  send(data: string) {
+    this.sent.push(String(data));
+  }
+
+  close(code = 1000, reason = 'fixture-close') {
+    this.closeWith(code, reason, true);
+  }
+
+  open() {
+    this.readyState = FixtureWebSocket.OPEN;
+    this.dispatch('open', { type: 'open' });
+  }
+
+  receive(data: unknown) {
+    this.dispatch('message', { data: typeof data === 'string' ? data : JSON.stringify(data) });
+  }
+
+  closeWith(code: number, reason = '', wasClean = false) {
+    this.readyState = FixtureWebSocket.CLOSED;
+    this.dispatch('close', { code, reason, wasClean });
+  }
+
+  private dispatch(type: string, event: unknown) {
+    for (const listener of this.listeners.get(type) || []) listener(event);
+  }
+}
+
+function installBrowserTransportFixtures() {
+  const globals = globalThis as unknown as Record<string, unknown>;
+  const previousWindow = globals.window;
+  const previousLocalStorage = globals.localStorage;
+  const previousWebSocket = globalThis.WebSocket;
+  const previousFetch = globalThis.fetch;
+
+  FixtureWebSocket.instances = [];
+  globals.window = {
+    location: {
+      origin: 'http://phone.test',
+      protocol: 'http:',
+      host: 'phone.test',
+    },
+  };
+  globals.localStorage = new FixtureLocalStorage();
+  globalThis.WebSocket = FixtureWebSocket as unknown as typeof WebSocket;
+  globalThis.fetch = (async (input: RequestInfo | URL) => {
+    const url = String(input);
+    if (url.includes('/api/health') && url.includes('bad-token')) {
+      return new Response(JSON.stringify({ error: 'bad token' }), { status: 403, statusText: 'Forbidden' });
+    }
+    if (url.includes('/api/health')) {
+      const health: PhoneHealth = {
+        cwd: '/repo',
+        hasToken: true,
+        isRunning: true,
+        childRunning: true,
+        isStreaming: false,
+        isCompacting: false,
+        host: '127.0.0.1',
+        port: 8787,
+        connectedClients: 1,
+        sessionCount: 1,
+        controlOwner: 'phone',
+        commandContextAvailable: true,
+      };
+      return Response.json(health);
+    }
+    if (url.includes('/api/quota')) return Response.json({ visible: false });
+    return new Response('not found', { status: 404 });
+  }) as typeof fetch;
+
+  return () => {
+    if (previousWindow === undefined) delete globals.window;
+    else globals.window = previousWindow;
+    if (previousLocalStorage === undefined) delete globals.localStorage;
+    else globals.localStorage = previousLocalStorage;
+    globalThis.WebSocket = previousWebSocket;
+    globalThis.fetch = previousFetch;
   };
 }
 
@@ -717,6 +845,36 @@ function testCommandDispatchActions() {
   assert.equal(tryHandleLocalCommand('/new', { store, client }), 'handled');
   assert.deepEqual(rpc.at(-1), { type: 'new_session' });
 
+  assert.equal(tryHandleLocalCommand('/compact', { store, client }), 'handled');
+  assert.deepEqual(rpc.at(-1), { type: 'compact' });
+
+  assert.equal(tryHandleLocalCommand('/reload', { store, client }), 'handled');
+  assert.equal(local.at(-1), 'reload');
+
+  assert.equal(tryHandleLocalCommand('/refresh', { store, client }), 'handled');
+  assert.deepEqual(local.at(-1), { kind: 'refreshAll', options: undefined });
+  assert.equal(store.snapshot().connection.refreshRequested, true);
+
+  assert.equal(tryHandleLocalCommand('/stats', { store, client }), 'handled');
+  assert.equal(store.snapshot().sheets.mode, 'actions');
+  assert.deepEqual(rpc.at(-1), { type: 'get_session_stats' });
+
+  assert.equal(tryHandleLocalCommand('/cost', { store, client }), 'handled');
+  assert.equal(store.snapshot().sheets.mode, 'actions');
+  assert.deepEqual(rpc.at(-1), { type: 'get_session_stats' });
+
+  assert.equal(tryHandleLocalCommand('/commands', { store, client }), 'handled');
+  assert.equal(store.snapshot().sheets.mode, 'commands');
+  assert.deepEqual(rpc.at(-1), { type: 'get_commands' });
+
+  assert.equal(tryHandleLocalCommand('/sessions', { store, client }), 'handled');
+  assert.equal(store.snapshot().sheets.mode, 'sessions');
+  assert.deepEqual(rpc.at(-1), { type: 'phone_list_sessions' });
+
+  assert.equal(tryHandleLocalCommand('/tree', { store, client }), 'handled');
+  assert.equal(store.snapshot().sheets.mode, 'tree');
+  assert.deepEqual(rpc.at(-1), { type: 'phone_get_tree' });
+
   assert.equal(tryHandleLocalCommand('/thinking high', { store, client }), 'handled');
   assert.deepEqual(rpc.at(-1), { type: 'set_thinking_level', level: 'high' });
 
@@ -821,11 +979,20 @@ async function testPromptSubmissionRules() {
 
   assert.deepEqual(await submitPrompt({ store, client }), { status: 'empty' }, 'empty prompts are ignored');
 
+  store.setComposerText('hello pi');
+  assert.equal((await submitPrompt({ store, client })).status, 'sent');
+  assert.deepEqual(rpc.at(-1), { type: 'prompt', message: 'hello pi' });
+  assert.equal(store.snapshot().composer.text, '', 'successful normal prompt submission clears the composer');
+  assert.match(store.snapshot().messages.items.at(-1)?.text || '', /hello pi/, 'normal prompt submission appends an optimistic user message');
+
   store.setCommands([{ name: 'ext', source: 'extension' }]);
   const remote = findRemoteSlashCommand('/ext run', store.snapshot().commands.available);
   assert.ok(remote);
   assert.equal(sendRemoteSlashCommand(remote, { store, client, images: [{ type: 'image', data: 'a', mimeType: 'image/png' }] }), 'blocked');
   assert.equal(local.length, 0, 'extension slash commands with images are not sent');
+  assert.equal(sendRemoteSlashCommand(remote, { store, client }), 'handled');
+  assert.deepEqual(local.at(-1), { type: 'slash-command', text: '/ext run' });
+  assert.equal(store.snapshot().quota.forceRefresh, true, 'extension slash commands request a quota refresh');
 
   store.setCommands([{ name: 'skill', source: 'skill' }]);
   store.setStatus({ cwd: '/repo', hasToken: false, isRunning: true, host: '127.0.0.1', port: 3000, childRunning: true, isStreaming: true, isCompacting: false, lastError: '', childPid: null, sessionWorkerId: 'worker', sessionKind: 'parallel' });
@@ -833,9 +1000,18 @@ async function testPromptSubmissionRules() {
   assert.equal((await submitPrompt({ store, client })).status, 'handled');
   assert.deepEqual(local.at(-1), { type: 'slash-command', text: '/skill arg', streamingBehavior: 'followUp' });
 
+  store.setComposerText('follow up');
+  assert.equal((await submitPrompt({ store, client })).status, 'sent');
+  assert.deepEqual(rpc.at(-1), { type: 'prompt', message: 'follow up', streamingBehavior: 'followUp' });
+
   store.setComposerText('steer this');
   assert.equal((await submitPrompt({ store, client, steer: true })).status, 'sent');
   assert.deepEqual(rpc.at(-1), { type: 'prompt', message: 'steer this', streamingBehavior: 'steer' });
+
+  store.updateComposer({ steerAvailable: true });
+  assert.equal(abortGeneration({ store, client }), true);
+  assert.deepEqual(rpc.at(-1), { type: 'abort' });
+  assert.equal(store.snapshot().composer.steerAvailable, false, 'abort clears steer availability');
 }
 
 function testAttachmentStoreOrderingAndCleanupHooks() {
@@ -1011,6 +1187,91 @@ async function testLoginTokenSubmissionAction() {
   assert.equal(emptyStore.snapshot().auth.authError, 'Enter the current /phone-start token.');
 }
 
+async function testPhoneClientTransportLifecycleFixtures() {
+  const restore = installBrowserTransportFixtures();
+  try {
+    storeToken('');
+    assert.equal(readStoredToken(), '', 'empty stored token starts clear');
+    storeToken('stored-token');
+    assert.equal(readStoredToken(), 'stored-token', 'transport token helper persists accepted tokens');
+    storeToken('');
+    assert.equal(readStoredToken(), '', 'clearing token removes it from storage');
+
+    const banners: string[] = [];
+    const envelopes: unknown[] = [];
+    const client = new PhoneClient({ reconnectDelayMs: 1, onEnvelope: (envelope) => envelopes.push(envelope) });
+    client.on('banner', (notice) => {
+      if (notice.message) banners.push(notice.message);
+    });
+
+    await assert.rejects(() => client.acceptToken('bad-token'), PhoneAuthError);
+    assert.equal(FixtureWebSocket.instances.length, 0, 'invalid token recovery does not open a WebSocket');
+
+    const health = await client.acceptToken('valid-token');
+    assert.equal(health.cwd, '/repo');
+    assert.equal(readStoredToken(), 'valid-token', 'valid login token is stored');
+
+    const firstSocket = FixtureWebSocket.instances.at(-1);
+    assert.ok(firstSocket, 'valid token login opens a WebSocket');
+    assert.match(String(firstSocket.url), /\/ws\?token=valid-token/, 'WebSocket URL carries the token for the Pi server');
+    firstSocket.open();
+    assert.equal(client.snapshot().connectionState, 'open');
+    assert.deepEqual(
+      firstSocket.sent.slice(0, 3).map((message) => JSON.parse(message)),
+      [
+        { kind: 'refresh' },
+        { kind: 'rpc', command: { type: 'get_commands' } },
+        { kind: 'rpc', command: { type: 'get_available_models' } },
+      ],
+      'socket open refreshes snapshot, commands, and models',
+    );
+
+    firstSocket.receive({ channel: 'server', event: 'status', data: { isStreaming: false } });
+    assert.deepEqual(envelopes.at(-1), { channel: 'server', event: 'status', data: { isStreaming: false } });
+
+    assert.equal(client.sendRpc({ type: 'abort' }), true);
+    assert.deepEqual(JSON.parse(firstSocket.sent.at(-1) || ''), { kind: 'rpc', command: { type: 'abort' } });
+
+    firstSocket.closeWith(1006, 'network lost', false);
+    assert.equal(client.snapshot().connectionState, 'reconnecting');
+    assert.ok(banners.some((message) => /Connection lost\. Retrying/i.test(message)), 'network close shows retry banner');
+
+    await new Promise((resolve) => setTimeout(resolve, 10));
+    const retrySocket = FixtureWebSocket.instances.at(-1);
+    assert.ok(retrySocket && retrySocket !== firstSocket, 'connection loss schedules a reconnect socket');
+    retrySocket.open();
+    assert.equal(client.snapshot().connectionState, 'open', 'reconnect socket can return to open state');
+
+    retrySocket.closeWith(4009, 'replaced', false);
+    assert.equal(client.snapshot().connectionState, 'closed');
+    assert.ok(banners.some((message) => /another device or tab/i.test(message)), 'single-client replacement close shows the replacement banner');
+
+    client.connect();
+    const idleSocket = FixtureWebSocket.instances.at(-1);
+    assert.ok(idleSocket && idleSocket !== retrySocket);
+    idleSocket.open();
+    idleSocket.closeWith(4010, 'idle', false);
+    assert.equal(client.snapshot().connectionState, 'closed');
+    assert.ok(banners.some((message) => /inactivity/i.test(message)), 'idle-timeout close shows the idle banner');
+  } finally {
+    restore();
+  }
+}
+
+function testServerLifecycleEnvelopeNotices() {
+  resetGlobalState();
+  handleEnvelope({ channel: 'server', event: 'single-client-replaced', data: { message: 'Replaced by another browser.' } });
+  assert.equal(piPhoneState.snapshot().feedback.banner?.text, 'Replaced by another browser.');
+
+  handleEnvelope({ channel: 'server', event: 'idle-timeout', data: { message: 'Idle timeout stopped the server.' } });
+  assert.equal(piPhoneState.snapshot().feedback.banner?.text, 'Idle timeout stopped the server.');
+
+  handleRpcPayload({ type: 'auto_retry_start', errorMessage: 'temporary disconnect' });
+  assert.match(piPhoneState.snapshot().feedback.banner?.text || '', /Retrying after error: temporary disconnect/);
+  handleRpcPayload({ type: 'auto_retry_end', success: false, finalError: 'still offline' });
+  assert.match(piPhoneState.snapshot().feedback.banner?.text || '', /Retry failed: still offline/);
+}
+
 export async function run() {
   testMessageAdapterFixtures();
   testSnapshotEnvelopeReducer();
@@ -1029,4 +1290,6 @@ export async function run() {
   testExtensionUiRequestActions();
   testLoginTokenUrlConsumption();
   await testLoginTokenSubmissionAction();
+  await testPhoneClientTransportLifecycleFixtures();
+  testServerLifecycleEnvelopeNotices();
 }

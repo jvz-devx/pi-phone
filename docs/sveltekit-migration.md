@@ -172,3 +172,9 @@ The SvelteKit UI should adapt Pi envelopes into typed stores and component props
 ## Manual parity caveat
 
 Automated type checks and fixture tests are useful, but they are not sufficient for cutover. Before replacing `public/`, manually verify token login, WebSocket reconnect, prompt streaming, abort/steer/follow-up, attachments and inline tokens, local and remote slash commands, autocomplete, model/thinking pickers, parent/parallel sessions, saved sessions, tree browsing, tool previews, extension UI requests, quota/context display, mobile safe-area behavior, desktop layout, and static/PWA asset loading through the existing Pi Phone server.
+
+For Steps 54-63, use `docs/sveltekit-validation-steps-54-63.md`. During development, the SvelteKit dev server can exercise the live `/phone-start` backend without touching `public/` by setting `PI_PHONE_BACKEND`, for example:
+
+```bash
+PI_PHONE_BACKEND=http://127.0.0.1:8787 npm run frontend:dev
+```
