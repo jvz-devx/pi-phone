@@ -52,40 +52,20 @@
   let promptInputAttachments = $state<PromptInputAttachmentData[]>([]);
   let selectedSuggestionIndex = $state(-1);
   let cleanupBeforeUnload: (() => void) | null = null;
+  let unsubscribeComposer: (() => void) | null = null;
   let appState = $derived($stateStore);
   let streaming = $derived(Boolean(appState.status?.isStreaming || appState.snapshot.state?.isStreaming));
   let steerVisible = $derived(canSteer(appState) && text.trim().length > 0);
   let ordered = $derived(orderedAttachments(appState.attachments.items, text));
   let canSubmit = $derived(Boolean(text.trim() || appState.attachments.items.length));
-
-  $effect(() => {
-    const storeText = appState.composer.text;
-    if (storeText === text) return;
-    text = storeText;
-    void tick().then(syncAutocomplete);
+  let autocompleteHasSuggestions = $derived(appState.autocomplete.items.length > 0);
+  let effectiveSuggestionIndex = $derived.by(() => {
+    const count = appState.autocomplete.items.length;
+    if (!count) return -1;
+    if (selectedSuggestionIndex < 0) return 0;
+    return Math.min(selectedSuggestionIndex, count - 1);
   });
-
-  $effect(() => {
-    if (stateStore.snapshot().composer.text !== text) stateStore.setComposerText(text);
-  });
-
-  $effect(() => {
-    if (selectedSuggestionIndex >= appState.autocomplete.items.length) {
-      selectedSuggestionIndex = appState.autocomplete.items.length ? appState.autocomplete.items.length - 1 : -1;
-    }
-  });
-
-  $effect(() => {
-    const nextSteerAvailable = canSteer(appState);
-    if (appState.composer.steerAvailable !== nextSteerAvailable) {
-      stateStore.updateComposer({ steerAvailable: nextSteerAvailable });
-    }
-  });
-
-  $effect(() => {
-    if (!autofocus || !textarea) return;
-    textarea.focus();
-  });
+  let activeSuggestionId = $derived(autocompleteHasSuggestions ? `composer-suggestion-${effectiveSuggestionIndex >= 0 ? effectiveSuggestionIndex : 0}` : undefined);
 
   function selection() {
     const start = textarea?.selectionStart ?? text.length;
@@ -160,7 +140,7 @@
     }
 
     if ((event.key === 'Enter' && !event.shiftKey) || event.key === 'Tab') {
-      const index = selectedSuggestionIndex >= 0 ? selectedSuggestionIndex : 0;
+      const index = effectiveSuggestionIndex >= 0 ? effectiveSuggestionIndex : 0;
       const item = items[index];
       if (!item) return;
       event.preventDefault();
@@ -230,26 +210,23 @@
 
   onMount(() => {
     cleanupBeforeUnload = registerAttachmentObjectUrlCleanup(stateStore);
+    unsubscribeComposer = stateStore.subscribe((next) => {
+      const storeText = next.composer.text;
+      if (storeText === text) return;
+      text = storeText;
+      void tick().then(syncAutocomplete);
+    });
     window.addEventListener(COMPOSER_SUBMIT_EVENT, handleExternalSubmit);
-  });
+    if (autofocus) void tick().then(() => textarea?.focus());
 
-  $effect(() => {
-    if (!textarea) return;
-    const hasSuggestions = appState.autocomplete.items.length > 0;
-    if (hasSuggestions) {
-      textarea.setAttribute('aria-controls', 'composer-suggestions');
-      const activeIndex = selectedSuggestionIndex >= 0 ? selectedSuggestionIndex : 0;
-      textarea.setAttribute('aria-activedescendant', `composer-suggestion-${activeIndex}`);
-    } else {
-      textarea.removeAttribute('aria-controls');
-      textarea.removeAttribute('aria-activedescendant');
-    }
-    textarea.setAttribute('aria-expanded', hasSuggestions ? 'true' : 'false');
-    textarea.setAttribute('aria-autocomplete', 'list');
+    return () => {
+      unsubscribeComposer?.();
+      unsubscribeComposer = null;
+      window.removeEventListener(COMPOSER_SUBMIT_EVENT, handleExternalSubmit);
+    };
   });
 
   onDestroy(() => {
-    window.removeEventListener(COMPOSER_SUBMIT_EVENT, handleExternalSubmit);
     cleanupBeforeUnload?.();
     clearComposerAttachments(stateStore, { text });
   });
@@ -260,7 +237,7 @@
 
   <AutocompleteStrip
     stateStore={stateStore}
-    selectedIndex={selectedSuggestionIndex}
+    selectedIndex={effectiveSuggestionIndex}
     onSelect={(item) => handleSelectSuggestion(item)}
   />
 
@@ -284,6 +261,10 @@
           bind:value={text}
           placeholder={streaming ? 'Queue a follow-up, or use Steer to guide the current response…' : 'Message Pi…'}
           aria-label="Prompt"
+          aria-controls={autocompleteHasSuggestions ? 'composer-suggestions' : undefined}
+          aria-activedescendant={activeSuggestionId}
+          aria-expanded={autocompleteHasSuggestions ? 'true' : 'false'}
+          aria-autocomplete="list"
           oninput={handleInput}
           onkeyup={syncAutocomplete}
           onclick={syncAutocomplete}

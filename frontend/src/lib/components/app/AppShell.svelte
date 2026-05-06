@@ -5,9 +5,9 @@
   import { phoneClient } from '$lib/pi-phone-transport';
   import { abortGeneration, openPhoneSheet, type PhoneSessionActionClient } from '$lib/actions/phone-commands';
   import type { PhoneAutocompleteClient } from '$lib/actions/autocomplete';
+  import { computeViewportCssVars, reconcileMobilePanelForDesktop, type PhoneMobilePanel } from '$lib/actions/mobile-layout';
   import { piPhoneState, type PhoneStateStore } from '$lib/stores/pi-phone-state';
   import { applyPiThemePayload } from '$lib/theme';
-  import type { PhoneSheetMode } from '$lib/types/pi-phone';
   import { cn } from '$lib/utils';
   import ChatWorkspace from '$lib/components/chat/ChatWorkspace.svelte';
   import ComposerBar from '$lib/components/chat/ComposerBar.svelte';
@@ -21,8 +21,6 @@
   const RIGHT_PREF_KEY = 'pi-phone-shell-right-open';
   const JUMP_LATEST_EVENT = 'pi-phone:jump-latest';
 
-  type MobilePanel = 'inspector' | 'actions' | PhoneSheetMode | null;
-
   interface Props {
     stateStore?: PhoneStateStore;
     client?: PhoneSessionActionClient & PhoneAutocompleteClient;
@@ -35,17 +33,19 @@
 
   let leftOpen = $state(false);
   let rightOpen = $state(false);
-  let mobilePanel = $state<MobilePanel>(null);
+  let mobilePanel = $state<PhoneMobilePanel>(null);
   let mounted = $state(false);
   let appState = $derived($stateStore);
   let activeSession = $derived(appState.sessions.active.find((session) => session.id === appState.sessions.activeSessionId) || null);
   let themePayload = $derived(appState.status?.theme || appState.auth.health?.theme || null);
-  let desktopColumns = $derived(`${leftOpen ? 'minmax(15rem, 19rem)' : '0rem'} minmax(0, 1fr) ${rightOpen ? 'minmax(18rem, 22rem)' : '0rem'}`);
+  let rightPanelOpen = $derived(rightOpen || appState.sheets.open);
+  let desktopColumns = $derived(`${leftOpen ? 'minmax(15rem, 19rem)' : '0rem'} minmax(0, 1fr) ${rightPanelOpen ? 'minmax(18rem, 22rem)' : '0rem'}`);
   let activePanel = $derived(appState.sheets.open ? appState.sheets.mode : mobilePanel);
   let lastQuotaRequestKey = $state('');
+  let appliedThemeKey = $state('\0');
   let mobileSheetRef: HTMLElement | null = $state(null);
   let mobileCloseButton: HTMLButtonElement | null = $state(null);
-  let previousActivePanel: MobilePanel = $state(null);
+  let previousActivePanel: PhoneMobilePanel = $state(null);
   let lastFocusedBeforeMobilePanel: HTMLElement | null = null;
   let streaming = $derived(Boolean(appState.status?.isStreaming || appState.snapshot.state?.isStreaming));
 
@@ -83,7 +83,7 @@
     setRightOpen(!rightOpen);
   }
 
-  function openMobilePanel(panel: Exclude<MobilePanel, null> | 'sessions') {
+  function openMobilePanel(panel: Exclude<PhoneMobilePanel, null> | 'sessions') {
     const nextPanel = panel === 'sessions' ? 'active-sessions' : panel;
     mobilePanel = nextPanel;
     if (nextPanel !== 'inspector' && nextPanel !== 'actions') stateStore.setSheetMode(nextPanel, { open: true });
@@ -217,11 +217,19 @@
   function updateViewportVars() {
     if (typeof window === 'undefined') return;
     const root = document.documentElement;
-    const viewport = window.visualViewport;
-    const visualHeight = viewport?.height || window.innerHeight;
-    const keyboardInset = viewport ? Math.max(0, window.innerHeight - viewport.height - viewport.offsetTop) : 0;
-    root.style.setProperty('--pi-visual-viewport-height', `${Math.round(visualHeight)}px`);
-    root.style.setProperty('--pi-keyboard-inset', `${Math.round(keyboardInset)}px`);
+    const { visualHeight, keyboardInset } = computeViewportCssVars(window.innerHeight, window.visualViewport);
+    root.style.setProperty('--pi-visual-viewport-height', `${visualHeight}px`);
+    root.style.setProperty('--pi-keyboard-inset', `${keyboardInset}px`);
+    window.dispatchEvent(new CustomEvent('pi-phone:viewport-change', { detail: { visualHeight, keyboardInset } }));
+  }
+
+  function reconcileDesktopPanels() {
+    if (!isDesktopLayout()) return;
+    const transition = reconcileMobilePanelForDesktop(mobilePanel, appState.sheets.open);
+    if (!transition) return;
+    mobilePanel = transition.mobilePanel;
+    if (transition.leftOpen !== undefined) setLeftOpen(transition.leftOpen);
+    if (transition.rightOpen !== undefined) setRightOpen(transition.rightOpen);
   }
 
   function requestRefresh(forceQuota = false) {
@@ -235,7 +243,7 @@
     });
   }
 
-  function drawerTitle(panel: Exclude<MobilePanel, null>) {
+  function drawerTitle(panel: Exclude<PhoneMobilePanel, null>) {
     if (panel === 'inspector') return 'Inspector';
     if (panel === 'active-sessions') return 'Active sessions';
     if (panel === 'sessions') return 'Saved sessions';
@@ -244,16 +252,16 @@
   }
 
   $effect(() => {
+    const colors = themePayload?.colors || {};
+    const key = `${themePayload?.name || ''}:${JSON.stringify(colors)}`;
+    if (key === appliedThemeKey) return;
+    appliedThemeKey = key;
     applyPiThemePayload(themePayload);
   });
 
   $effect(() => {
-    if (appState.sheets.open && isDesktopLayout() && !rightOpen) setRightOpen(true);
-  });
-
-  $effect(() => {
     const panel = activePanel;
-    if (panel && !previousActivePanel) {
+    if (panel && !previousActivePanel && !isDesktopLayout()) {
       lastFocusedBeforeMobilePanel = document.activeElement instanceof HTMLElement ? document.activeElement : null;
       void tick().then(() => {
         mobileCloseButton?.focus?.();
@@ -287,12 +295,14 @@
     updateViewportVars();
     window.addEventListener('keydown', handleGlobalKeydown);
     window.addEventListener('resize', updateViewportVars);
+    window.addEventListener('resize', reconcileDesktopPanels);
     window.visualViewport?.addEventListener('resize', updateViewportVars);
     window.visualViewport?.addEventListener('scroll', updateViewportVars);
 
     return () => {
       window.removeEventListener('keydown', handleGlobalKeydown);
       window.removeEventListener('resize', updateViewportVars);
+      window.removeEventListener('resize', reconcileDesktopPanels);
       window.visualViewport?.removeEventListener('resize', updateViewportVars);
       window.visualViewport?.removeEventListener('scroll', updateViewportVars);
       document.documentElement.style.removeProperty('--pi-visual-viewport-height');
@@ -305,7 +315,7 @@
   <TopStatusBar
     stateStore={stateStore}
     {leftOpen}
-    {rightOpen}
+    rightOpen={rightPanelOpen}
     onToggleLeft={toggleLeft}
     onToggleRight={toggleRight}
     onOpenMobilePanel={(panel) => (panel === 'actions' ? openActions() : openMobilePanel(panel))}
@@ -338,9 +348,9 @@
     <aside
       class={cn(
         'hidden min-h-0 overflow-hidden transition-[opacity,transform] duration-200 lg:block',
-        rightOpen ? 'opacity-100' : 'pointer-events-none translate-x-2 opacity-0',
+        rightPanelOpen ? 'opacity-100' : 'pointer-events-none translate-x-2 opacity-0',
       )}
-      aria-hidden={!rightOpen}
+      aria-hidden={!rightPanelOpen}
       aria-label="Inspector panel"
     >
       <div class="flex h-full min-h-0 flex-col gap-3">

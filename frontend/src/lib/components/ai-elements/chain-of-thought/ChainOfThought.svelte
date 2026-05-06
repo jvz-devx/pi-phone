@@ -33,7 +33,7 @@
 
 	// Handle controlled mode synchronization
 	$effect(() => {
-		if (open !== undefined) {
+		if (open !== undefined && context.isOpen !== open) {
 			context.isOpen = open;
 		}
 	});

@@ -24,6 +24,7 @@ export class ReasoningContext {
 	}
 
 	set isStreaming(value: boolean) {
+		if (this.#isStreaming === value) return;
 		this.#isStreaming = value;
 	}
 
@@ -32,6 +33,7 @@ export class ReasoningContext {
 	}
 
 	set isOpen(value: boolean) {
+		if (this.#isOpen === value) return;
 		this.#isOpen = value;
 	}
 
@@ -40,11 +42,12 @@ export class ReasoningContext {
 	}
 
 	set duration(value: number) {
+		if (this.#duration === value) return;
 		this.#duration = value;
 	}
 
 	setIsOpen(open: boolean) {
-		this.#isOpen = open;
+		this.isOpen = open;
 	}
 }
 

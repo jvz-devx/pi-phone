@@ -1,6 +1,7 @@
 <script lang="ts">
   import Check from '@lucide/svelte/icons/check';
   import Search from '@lucide/svelte/icons/search';
+  import { requestModelSwitch } from '$lib/actions/phone-commands';
   import { phoneClient, type PhoneClient } from '$lib/pi-phone-transport';
   import { piPhoneState, type PhoneStateStore } from '$lib/stores/pi-phone-state';
   import type { PhoneModel } from '$lib/types/pi-phone';
@@ -55,17 +56,7 @@
   }
 
   function selectModel(model: PhoneModel) {
-    if (!model.provider || !model.id) return;
-    const sent = client.sendRpc({ type: 'set_model', provider: model.provider, modelId: model.id });
-    if (!sent) return;
-    stateStore.update((state) => {
-      state.quota.refreshNeeded = true;
-      state.quota.forceRefresh = true;
-      state.connection.forceQuotaRefreshRequested = true;
-      return state;
-    });
-    selectorOpen = false;
-    stateStore.setSheetOpen(false);
+    if (requestModelSwitch(model, { store: stateStore, client }) === 'handled') selectorOpen = false;
   }
 </script>
 

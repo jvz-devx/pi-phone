@@ -55,8 +55,9 @@ npm run frontend:sync-public
 
 1. refuses to continue if `public/` is dirty in git status;
 2. builds the SvelteKit app into `frontend/build/`;
-3. validates that static output includes `index.html` and SvelteKit's `_app/` assets;
-4. exits without changing `public/`.
+3. validates that static output includes `index.html`, `manifest.webmanifest`, `sw.js`, `icon.svg`, and SvelteKit's `_app/` assets;
+4. runs the static fallback and Svelte validation checks so `/api/*`, `/ws`, manifest, service worker, and offline guardrails are verified before any release copy;
+5. exits without changing `public/`.
 
 `frontend:sync-public` performs the same checks and build, then:
 
@@ -81,10 +82,11 @@ Do not wire this script into `npm test`, `npm run frontend:build`, package insta
 4. Missing static `GET`/`HEAD` paths fall back to `public/index.html`, matching the SvelteKit `adapter-static` setting `fallback: 'index.html'`.
 5. `mimeTypes` covers the SvelteKit output currently produced in `frontend/build/`, including `_app/immutable` JavaScript/CSS chunks and KaTeX font files (`.woff`, `.woff2`, `.ttf`).
 
-The lightweight check below verifies the source ordering, adapter-static configuration, WebSocket upgrade separation, SPA fallback, and MIME coverage. If `frontend/build/` exists, it also scans the built file extensions.
+The lightweight checks below verify the source ordering, adapter-static configuration, WebSocket upgrade separation, SPA fallback, MIME coverage, PWA manifest/service-worker behavior, and release-script guardrails. If `frontend/build/` exists, they also scan the built file extensions and app-shell asset references.
 
 ```bash
 npm run static:fallback:check
+npm run svelte:validation:check
 ```
 
 The current adapter-static build shape is:

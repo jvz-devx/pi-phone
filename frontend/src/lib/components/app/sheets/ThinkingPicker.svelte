@@ -1,7 +1,7 @@
 <script lang="ts">
   import Check from '@lucide/svelte/icons/check';
   import Brain from '@lucide/svelte/icons/brain';
-  import { THINKING_LEVELS, type PhoneCommandActionClient } from '$lib/actions/phone-commands';
+  import { requestThinkingLevelSwitch, THINKING_LEVELS, type PhoneCommandActionClient } from '$lib/actions/phone-commands';
   import { phoneClient } from '$lib/pi-phone-transport';
   import { piPhoneState, type PhoneStateStore } from '$lib/stores/pi-phone-state';
   import type { PhoneThinkingLevel } from '$lib/types/pi-phone';
@@ -31,8 +31,7 @@
   let currentLevel = $derived(appState.snapshot.state?.thinkingLevel || '');
 
   function selectLevel(level: PhoneThinkingLevel) {
-    const sent = client.sendRpc({ type: 'set_thinking_level', level });
-    if (sent) stateStore.setSheetOpen(false);
+    requestThinkingLevelSwitch(level, { store: stateStore, client });
   }
 </script>
 

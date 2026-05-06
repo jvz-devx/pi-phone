@@ -1,5 +1,5 @@
 <script lang="ts">
-  import { onDestroy } from 'svelte';
+  import { onMount } from 'svelte';
   import X from '@lucide/svelte/icons/x';
   import { Button } from '$lib/components/ui/button/index.js';
   import { piPhoneState, type PhoneStateStore } from '$lib/stores/pi-phone-state';
@@ -14,8 +14,8 @@
   let appState = $derived($stateStore);
   const timers = new Map<string, ReturnType<typeof setTimeout>>();
 
-  $effect(() => {
-    const activeIds = new Set(appState.feedback.toasts.map((toast) => toast.id));
+  function syncToastTimers(toasts = stateStore.snapshot().feedback.toasts) {
+    const activeIds = new Set(toasts.map((toast) => toast.id));
 
     for (const [id, timer] of timers) {
       if (!activeIds.has(id)) {
@@ -24,7 +24,7 @@
       }
     }
 
-    for (const toast of appState.feedback.toasts) {
+    for (const toast of toasts) {
       if (timers.has(toast.id)) continue;
       const elapsed = Date.now() - toast.createdAt;
       const delay = Math.max(0, toast.ttlMs - elapsed);
@@ -36,11 +36,19 @@
         }, delay),
       );
     }
-  });
+  }
 
-  onDestroy(() => {
+  function clearToastTimers() {
     for (const timer of timers.values()) clearTimeout(timer);
     timers.clear();
+  }
+
+  onMount(() => {
+    const unsubscribe = stateStore.subscribe((nextState) => syncToastTimers(nextState.feedback.toasts));
+    return () => {
+      unsubscribe();
+      clearToastTimers();
+    };
   });
 </script>
 

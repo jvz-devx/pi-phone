@@ -161,6 +161,31 @@ export function findRemoteSlashCommand(text: string, commands: PhoneCommand[] = 
   return { ...parsed, source: match.source || 'extension' };
 }
 
+export function shouldBlockUnresolvedSlashCommand(text: string, state: PhoneAppState = piPhoneState.snapshot()) {
+  const parsed = parseSlashCommandText(text);
+  if (!parsed) return false;
+  if (LOCAL_COMMAND_NAMES.has(parsed.name)) return false;
+  if (state.commands.available.length > 0) return false;
+  return !state.commands.loaded;
+}
+
+export function blockUnresolvedSlashCommand(
+  text: string,
+  options: {
+    store?: PhoneStateStore;
+    client?: PhoneCommandActionClient;
+  } = {},
+): CommandDispatchResult {
+  const store = options.store || piPhoneState;
+  const client = options.client || phoneClient;
+  if (!shouldBlockUnresolvedSlashCommand(text, store.snapshot())) return false;
+
+  const parsed = parseSlashCommandText(text);
+  client.sendRpc({ type: 'get_commands' });
+  notify(store, `Slash commands are still loading. Refreshing commands; try ${parsed?.text || 'that command'} again in a moment.`, 'warning');
+  return 'blocked';
+}
+
 export function isStreamingState(state: Pick<PhoneAppState, 'status' | 'snapshot'>) {
   return Boolean(state.status?.isStreaming || state.snapshot.state?.isStreaming);
 }
@@ -241,6 +266,43 @@ function modelLabel(model: PhoneModel) {
   return [model.provider, model.id, model.name].filter(Boolean).join('/');
 }
 
+export function requestThinkingLevelSwitch(
+  level: PhoneThinkingLevel,
+  options: {
+    store?: PhoneStateStore;
+    client?: Pick<PhoneClient, 'sendRpc'>;
+  } = {},
+): CommandDispatchResult {
+  if (!(THINKING_LEVELS as readonly string[]).includes(level)) return false;
+
+  const store = options.store || piPhoneState;
+  const client = options.client || phoneClient;
+  const sent = client.sendRpc({ type: 'set_thinking_level', level });
+  if (!sent) return 'blocked';
+
+  store.setSheetOpen(false);
+  return 'handled';
+}
+
+export function requestModelSwitch(
+  model: PhoneModel | null | undefined,
+  options: {
+    store?: PhoneStateStore;
+    client?: Pick<PhoneClient, 'sendRpc'>;
+  } = {},
+): CommandDispatchResult {
+  if (!model?.provider || !model?.id) return false;
+
+  const store = options.store || piPhoneState;
+  const client = options.client || phoneClient;
+  const sent = client.sendRpc({ type: 'set_model', provider: model.provider, modelId: model.id });
+  if (!sent) return 'blocked';
+
+  markForcedQuotaRefresh(store);
+  store.setSheetOpen(false);
+  return 'handled';
+}
+
 export function tryHandleLocalCommand(
   text: string,
   options: {
@@ -296,7 +358,7 @@ export function tryHandleLocalCommand(
   if (name === 'cd') return client.sendLocalCommand({ type: 'cd', args }) ? 'handled' : 'blocked';
   if (name === 'thinking') {
     if (args && (THINKING_LEVELS as readonly string[]).includes(args)) {
-      return client.sendRpc({ type: 'set_thinking_level', level: args as PhoneThinkingLevel }) ? 'handled' : 'blocked';
+      return requestThinkingLevelSwitch(args as PhoneThinkingLevel, { store, client });
     }
     openSheet(store, 'thinking', client);
     return 'handled';
@@ -307,11 +369,7 @@ export function tryHandleLocalCommand(
       const match = store.snapshot().models.available.find((model) =>
         provider ? model.provider === provider && model.id === modelId : model.id === modelId || model.name === modelId || modelLabel(model) === args,
       );
-      if (match) {
-        const sent = client.sendRpc({ type: 'set_model', provider: match.provider, modelId: match.id });
-        if (sent) markForcedQuotaRefresh(store);
-        return sent ? 'handled' : 'blocked';
-      }
+      if (match) return requestModelSwitch(match, { store, client });
       openSheet(store, 'models', client);
       client.sendRpc({ type: 'get_available_models' });
       notify(store, 'Model not found locally. Pick one from the sheet.', 'error');
@@ -407,6 +465,9 @@ export async function submitPrompt(
       }
     }
 
+    const unresolvedSlashCommandResult = message ? blockUnresolvedSlashCommand(message, { store, client }) : false;
+    if (unresolvedSlashCommandResult) return { status: unresolvedSlashCommandResult, command: message };
+
     const behavior = streamingBehaviorForSubmit(store.snapshot(), steer);
     const rpcCommand: PiPhoneRpcCommand = {
       type: 'prompt',
@@ -489,6 +550,8 @@ export function startNewParentSession(options: { store?: PhoneStateStore; client
   const sent = client.sendParentSessionNew();
   if (!sent) return false;
 
+  store.clearPendingUiRequest();
+  store.clearSnapshotView();
   store.setFollowLatest(true);
   notify(store, 'Starting new parent session…');
   return true;

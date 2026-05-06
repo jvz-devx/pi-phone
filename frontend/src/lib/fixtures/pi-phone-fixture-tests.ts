@@ -18,22 +18,28 @@ import {
   sendExtensionUiResponse,
 } from '$lib/actions/extension-ui';
 import {
+  addImageAttachments,
   attachmentOccurrences,
   buildPromptPayload,
   buildTokenInsertion,
   filterImageFiles,
   insertTokensAtSelection,
   orderedAttachments,
+  removeAttachmentAndToken,
   stripTokenFromPrompt,
   syncAttachmentRecordsWithPrompt,
 } from '$lib/actions/attachments';
 import { handleEnvelope, handleRpcPayload } from '$lib/actions/envelope-handlers';
+import { computeViewportCssVars, reconcileMobilePanelForDesktop, shouldShowJumpToLatest } from '$lib/actions/mobile-layout';
 import {
   findRemoteSlashCommand,
   forkSessionEntry,
   abortGeneration,
+  canSteer,
   openBranchPath,
   parentCommandControlsAvailable,
+  requestModelSwitch,
+  requestThinkingLevelSwitch,
   runPhoneQuickAction,
   selectActiveSession,
   sendRemoteSlashCommand,
@@ -301,6 +307,21 @@ function testMessageAdapterFixtures() {
   assert.deepEqual(genericCustom.rawContent, fixtureMessages[5].role === 'custom' ? fixtureMessages[5].content : undefined);
   assert.deepEqual(genericCustom.details, { severity: 'info' });
 
+  const [customPreview] = transformPhoneMessage({
+    role: 'custom',
+    customType: 'markdown-image-preview',
+    timestamp: 1_700_000_015_000,
+    content: [
+      { type: 'text', text: '# Preview\n\n![inline](attachment)\n' },
+      { type: 'image', data: 'aW1hZ2U=', mimeType: 'image/png', name: 'preview.png' },
+    ],
+    details: { source: 'fixture' },
+  });
+  assert.equal(customPreview.kind, 'custom');
+  assert.equal(customPreview.text, '# Preview\n\n![inline](attachment)\n [image]', 'custom markdown-like messages preserve text and image placeholders for PiMarkdown rendering');
+  assert.equal(customPreview.imageCount, 1, 'custom markdown-like messages retain image-count metadata');
+  assert.deepEqual(customPreview.details, { source: 'fixture' });
+
   const branchSummary = messages[6];
   assert.equal(branchSummary.kind, 'summary');
   assert.equal(branchSummary.summaryKind, 'branch');
@@ -325,6 +346,7 @@ function testSnapshotEnvelopeReducer() {
   assert.equal(state.snapshot.state?.sessionId, 'session-123');
   assert.equal(state.status?.isStreaming, true);
   assert.equal(state.commands.available.length, fixtureCommands.length);
+  assert.equal(state.commands.loaded, true, 'snapshot envelopes with command catalogs mark commands as loaded');
   assert.equal(state.messages.items.length, 8);
   assert.equal(state.messages.liveAssistant?.id, 'assistant-live');
   assert.equal(state.messages.liveAssistant?.live, true);
@@ -338,6 +360,7 @@ function testCommandAndPathSuggestionResponses() {
   resetGlobalState();
   handleRpcPayload(fixtureCommandsResponse);
   assert.equal(piPhoneState.snapshot().commands.available.at(-1)?.name, 'plan');
+  assert.equal(piPhoneState.snapshot().commands.loaded, true, 'get_commands responses mark the command catalog as loaded');
 
   piPhoneState.setAutocompleteContext({ type: 'path', mode: 'mention', query: 'src', replaceStart: 10, replaceEnd: 14 });
   piPhoneState.setAutocompleteRemoteRequestId(7);
@@ -443,6 +466,25 @@ function testToolPreviewAdapterFixtures() {
   if (editSection?.type !== 'diff') throw new AssertionError({ message: 'edit preview should be a diff' });
   assert.deepEqual(editSection.stats, { added: 1, removed: 1 });
 
+  const detailedEditPreview = buildToolPreview({
+    id: 'tool-edit-detailed-fixture',
+    kind: 'tool',
+    toolName: 'edit',
+    status: 'done',
+    args: { path: 'src/app.ts' },
+    details: { diff: '+ 10 next\n- 11 old\n  12 keep', firstChangedLine: 10, replacementCount: 1 },
+  });
+  assert.deepEqual(detailedEditPreview.badges.map((item) => item.label), ['+1', '-1', 'L10']);
+  assert.equal(detailedEditPreview.note, undefined, 'server-provided edit diffs are not labeled as replacement-block guesses');
+  const detailedEditSection = detailedEditPreview.sections[0];
+  assert.equal(detailedEditSection?.type, 'diff');
+  if (detailedEditSection?.type !== 'diff') throw new AssertionError({ message: 'server edit preview should be a diff' });
+  assert.deepEqual(
+    detailedEditSection.lines.map((line) => [line.kind, line.lineNumber, line.text]),
+    [['added', '10', 'next'], ['removed', '11', 'old'], ['context', '12', 'keep']],
+    'server-provided edit diffs preserve numbered added/removed/context rows',
+  );
+
   const writePreview = buildToolPreview({
     id: 'tool-write-fixture',
     kind: 'tool',
@@ -475,6 +517,20 @@ function testToolPreviewAdapterFixtures() {
   assert.equal(markdownSection.markdown, '# Title\n\nBody');
   assert.match(markdownSection.notice || '', /Use offset=8/);
   assert.ok(readMarkdownPreview.badges.some((item) => item.label === '5-7'), 'read previews preserve line ranges');
+
+  const longMarkdownPreview = buildToolPreview({
+    id: 'tool-read-long-md-fixture',
+    kind: 'tool',
+    toolName: 'read',
+    status: 'done',
+    args: { path: 'docs/preview.md' },
+    text: Array.from({ length: 92 }, (_, index) => `markdown line ${index + 1}`).join('\n'),
+  });
+  const longMarkdownSection = longMarkdownPreview.sections[0];
+  assert.equal(longMarkdownSection?.type, 'markdown');
+  if (longMarkdownSection?.type !== 'markdown') throw new AssertionError({ message: 'long markdown read preview should be markdown' });
+  assert.equal(longMarkdownSection.hiddenCount, 2, 'markdown previews preserve hidden line counts beyond the preview limit');
+  assert.match(longMarkdownSection.markdown, /markdown line 90$/);
 
   const imagePreview = buildToolPreview({
     id: 'tool-read-image-fixture',
@@ -579,6 +635,44 @@ function testToolPreviewAdapterFixtures() {
   assert.equal(lsSection.entries.length, 80, 'ls previews apply the old line limit');
   assert.equal(lsSection.hiddenCount, 2, 'ls previews preserve list truncation counts');
   assert.equal(lsSection.notice, '[limit reached]');
+}
+
+function testMobileLayoutAndPanelPersistenceFixtures() {
+  assert.deepEqual(
+    computeViewportCssVars(844, { height: 520.4, offsetTop: 24.2 }),
+    { visualHeight: 520, keyboardInset: 300 },
+    'mobile keyboard inset accounts for visual viewport height and offset',
+  );
+  assert.deepEqual(
+    computeViewportCssVars(844, null),
+    { visualHeight: 844, keyboardInset: 0 },
+    'desktop/no-visualViewport layout does not invent a keyboard inset',
+  );
+
+  assert.equal(shouldShowJumpToLatest(true, false, false), true, 'jump-latest shows only when content exists and user is away from latest');
+  assert.equal(shouldShowJumpToLatest(true, true, false), false, 'jump-latest hides while following latest');
+  assert.equal(shouldShowJumpToLatest(true, false, true), false, 'jump-latest hides near the bottom');
+  assert.equal(shouldShowJumpToLatest(false, false, false), false, 'jump-latest hides for empty conversations');
+
+  assert.deepEqual(reconcileMobilePanelForDesktop(null, false), null, 'desktop reconciliation is a no-op without a mobile panel or sheet');
+  assert.deepEqual(reconcileMobilePanelForDesktop('inspector', false), { mobilePanel: null, rightOpen: true }, 'mobile inspector reopens as the desktop right panel');
+  assert.deepEqual(reconcileMobilePanelForDesktop('active-sessions', false), { mobilePanel: null, leftOpen: true }, 'mobile active sessions reopen as the desktop session rail');
+  assert.deepEqual(reconcileMobilePanelForDesktop('commands', true), { mobilePanel: null, rightOpen: true }, 'mobile sheets remain visible in the desktop right panel after resize');
+
+  const store = createPiPhoneStateStore();
+  store.setToolPanelOpen('tool-a', false);
+  store.setToolPanelOpen('tool-b', true);
+  assert.equal(store.snapshot().tools.panelOpen.get('tool-a'), false);
+  assert.equal(store.snapshot().tools.panelOpen.get('tool-b'), true);
+
+  store.clearTransientState();
+  assert.equal(store.snapshot().tools.panelOpen.get('tool-a'), false, 'transient stream cleanup preserves explicit tool panel collapse state');
+
+  store.clearSnapshotView();
+  assert.equal(store.snapshot().tools.panelOpen.get('tool-b'), true, 'session-view cleanup preserves explicit tool panel expansion state for remounts/resizes');
+
+  const collapsedPreview = buildToolPreview({ id: 'tool-a', kind: 'tool', toolName: 'bash', status: 'done', text: 'ok' }, { panelOpen: store.snapshot().tools.panelOpen });
+  assert.equal(collapsedPreview.open, false, 'tool preview honors persisted collapsed panel state after remount');
 }
 
 function testLiveAssistantStreamingReducers() {
@@ -755,6 +849,49 @@ async function testAttachmentOrderingRemovalAndPayload() {
     { text: 'a  b ', selectionStart: 5, selectionEnd: 5, changed: true },
     'removing an attachment strips all token occurrences and adjusts the cursor',
   );
+
+  const selectedTokenText = 'start ⟦img1⟧ middle ⟦img1⟧ end';
+  const selectedTokenEdit = stripTokenFromPrompt('⟦img1⟧', {
+    text: selectedTokenText,
+    selectionStart: selectedTokenText.indexOf('middle'),
+    selectionEnd: selectedTokenText.indexOf(' end'),
+  });
+  assert.deepEqual(
+    selectedTokenEdit,
+    {
+      text: 'start  middle  end',
+      selectionStart: 'start  '.length,
+      selectionEnd: 'start  middle '.length,
+      changed: true,
+    },
+    'removing repeated attachment tokens preserves an adjusted non-collapsed text selection',
+  );
+
+  const editStore = createPiPhoneStateStore();
+  const addResult = addImageAttachments([new File(['selected'], 'selected.png', { type: 'image/png' })], {
+    store: editStore,
+    text: 'replace this text',
+    selection: { start: 8, end: 12 },
+  });
+  assert.equal(addResult.text, 'replace ⟦img1⟧ text');
+  assert.deepEqual(
+    { selectionStart: addResult.selectionStart, selectionEnd: addResult.selectionEnd, composer: editStore.snapshot().composer.text },
+    { selectionStart: 'replace ⟦img1⟧'.length, selectionEnd: 'replace ⟦img1⟧'.length, composer: 'replace ⟦img1⟧ text' },
+    'attachment insertion replaces the active selection and returns the cursor after the inserted token',
+  );
+
+  const removeResult = removeAttachmentAndToken(addResult.added[0]?.id || '', {
+    store: editStore,
+    text: addResult.text,
+    selection: { start: addResult.text.indexOf('text'), end: addResult.text.length },
+  });
+  assert.equal(removeResult.text, 'replace  text');
+  assert.deepEqual(
+    { selectionStart: removeResult.selectionStart, selectionEnd: removeResult.selectionEnd, remainingAttachments: editStore.snapshot().attachments.items.length },
+    { selectionStart: 'replace  '.length, selectionEnd: 'replace  text'.length, remainingAttachments: 0 },
+    'attachment removal updates the store and shifts the active selection after the stripped token',
+  );
+
   assert.deepEqual(
     syncAttachmentRecordsWithPrompt([first, second], 'keep ⟦img2⟧'),
     { kept: [second], removed: [first] },
@@ -838,6 +975,13 @@ function testAutocompleteActions() {
     replaceStart: 5,
     replaceEnd: 12,
   });
+  assert.deepEqual(detectMentionAutocompleteContext('open @src/fixture now', 9), {
+    type: 'path',
+    mode: 'mention',
+    query: 'src',
+    replaceStart: 5,
+    replaceEnd: 17,
+  }, 'mention autocomplete expands replacement to the full token when the cursor is mid-token');
   assert.equal(activeAutocompleteContext('email@host', 10), null, 'mentions require a delimiter before @');
 
   assert.deepEqual(
@@ -936,6 +1080,12 @@ function testCommandDispatchActions() {
   assert.equal(tryHandleLocalCommand('/thinking high', { store, client }), 'handled');
   assert.deepEqual(rpc.at(-1), { type: 'set_thinking_level', level: 'high' });
 
+  const thinkingPickerStore = createPiPhoneStateStore();
+  thinkingPickerStore.setSheetMode('thinking', { open: true });
+  assert.equal(requestThinkingLevelSwitch('medium', { store: thinkingPickerStore, client }), 'handled');
+  assert.deepEqual(rpc.at(-1), { type: 'set_thinking_level', level: 'medium' });
+  assert.equal(thinkingPickerStore.snapshot().sheets.open, false, 'thinking picker action closes after dispatch');
+
   store.setModels([{ provider: 'openai-codex', id: 'gpt-5-codex', name: 'GPT 5 Codex' }]);
   assert.equal(tryHandleLocalCommand('/model openai-codex/gpt-5-codex', { store, client }), 'handled');
   assert.deepEqual(rpc.at(-1), { type: 'set_model', provider: 'openai-codex', modelId: 'gpt-5-codex' });
@@ -944,6 +1094,17 @@ function testCommandDispatchActions() {
   assert.equal(tryHandleLocalCommand('/model GPT 5 Codex', { store, client }), 'handled');
   assert.deepEqual(rpc.at(-1), { type: 'set_model', provider: 'openai-codex', modelId: 'gpt-5-codex' }, 'model command can switch by display name');
 
+  const modelPickerStore = createPiPhoneStateStore();
+  modelPickerStore.setSheetMode('models', { open: true });
+  assert.equal(
+    requestModelSwitch({ provider: 'openai-codex', id: 'gpt-5-codex', name: 'GPT 5 Codex', contextWindow: 200_000 }, { store: modelPickerStore, client }),
+    'handled',
+  );
+  assert.deepEqual(rpc.at(-1), { type: 'set_model', provider: 'openai-codex', modelId: 'gpt-5-codex' });
+  assert.equal(modelPickerStore.snapshot().sheets.open, false, 'model picker action closes after dispatch');
+  assert.equal(modelPickerStore.snapshot().quota.forceRefresh, true, 'model picker action requests forced quota refresh');
+  assert.equal(modelPickerStore.snapshot().connection.forceQuotaRefreshRequested, true, 'model picker action marks transport quota refresh');
+
   assert.equal(tryHandleLocalCommand('/model missing-model', { store, client }), 'handled');
   assert.equal(store.snapshot().sheets.mode, 'models', 'unknown model names fall back to opening the model picker');
   assert.match(store.snapshot().feedback.toasts.at(-1)?.text || '', /Model not found locally/);
@@ -951,8 +1112,13 @@ function testCommandDispatchActions() {
   resetGlobalState();
   handleRpcPayload({ type: 'response', command: 'set_model', success: true, data: { provider: 'openai-codex', id: 'gpt-5-codex', name: 'GPT 5 Codex' } });
   assert.match(piPhoneState.snapshot().feedback.toasts.at(-1)?.text || '', /Model updated/);
+  assert.equal(piPhoneState.snapshot().quota.forceRefresh, true, 'model update responses force quota refresh');
+  assert.equal(piPhoneState.snapshot().connection.forceQuotaRefreshRequested, true, 'model update responses mark transport quota refresh');
+
+  resetGlobalState();
   handleRpcPayload({ type: 'response', command: 'set_thinking_level', success: true });
   assert.match(piPhoneState.snapshot().feedback.toasts.at(-1)?.text || '', /Thinking level updated/);
+  assert.equal(piPhoneState.snapshot().quota.forceRefresh, false, 'thinking-level updates refresh state without forcing quota');
 
   assert.equal(tryHandleLocalCommand('/cd /tmp', { store, client }), 'handled');
   assert.deepEqual(local.at(-1), { type: 'cd', args: '/tmp' });
@@ -1062,28 +1228,43 @@ function testQuickActionAndSessionDispatchActions() {
   assert.equal(selectActiveSession('parallel-1', { store, client }), true);
   assert.deepEqual(session.at(-1), { kind: 'session-select', sessionId: 'parallel-1' });
 
+  store.setPendingUiRequest({ type: 'extension_ui_request', method: 'input', id: 'stale-ui', sessionWorkerId: 'parallel-1', prompt: 'stale' });
+  store.setMessages([{ id: 'stale-message', kind: 'assistant', text: 'stale', meta: '' }]);
   assert.equal(startNewParentSession({ store, client }), true);
   assert.deepEqual(session.at(-1), { kind: 'session-parent-new' });
+  assert.equal(store.snapshot().uiRequests.pending, null, 'new parent clears stale pending UI from the previous session');
+  assert.equal(store.snapshot().messages.items.length, 0, 'new parent clears stale snapshot messages while the new parent loads');
 
   assert.equal(spawnParallelSession({ store, client }), true);
   assert.deepEqual(session.at(-1), { kind: 'session-spawn' });
 
+  const statusOnlyUnavailableStore = createPiPhoneStateStore();
+  statusOnlyUnavailableStore.setStatus({ cwd: '/repo', hasToken: false, isRunning: true, host: '127.0.0.1', port: 3000, childRunning: true, isStreaming: false, isCompacting: false, lastError: '', childPid: null, sessionWorkerId: 'parent-status', sessionKind: 'parent', commandContextAvailable: false });
+  assert.equal(parentCommandControlsAvailable(statusOnlyUnavailableStore.snapshot()), false, 'status-only parent command-context outage disables new parent');
+
   store.setActiveSessions([{ ...store.snapshot().sessions.active[0], commandContextAvailable: false }], 'parent-1');
   store.setStatus({ cwd: '/repo', hasToken: false, isRunning: true, host: '127.0.0.1', port: 3000, childRunning: true, isStreaming: false, isCompacting: false, lastError: '', childPid: null, sessionWorkerId: 'parent-1', sessionKind: 'parent', commandContextAvailable: false });
   assert.equal(parentCommandControlsAvailable(store.snapshot()), false);
+  const sessionCountBeforeBlockedParent = session.length;
   assert.equal(startNewParentSession({ store, client }), false, 'new parent is blocked when Pi reports command context unavailable');
+  assert.equal(session.length, sessionCountBeforeBlockedParent, 'blocked new parent does not send a session-parent-new command');
   assert.match(store.snapshot().feedback.toasts.at(-1)?.text || '', /fresh command context/);
   assert.deepEqual(local.at(-1), { kind: 'refreshAll', options: undefined });
   assert.equal(store.snapshot().connection.refreshRequested, true);
 
-  assert.equal(switchSavedSession('/tmp/session.jsonl', { store, client }), true);
-  assert.deepEqual(rpc.at(-1), { type: 'switch_session', sessionPath: '/tmp/session.jsonl' });
+  assert.equal(switchSavedSession('  /tmp/session.jsonl  ', { store, client }), true);
+  assert.deepEqual(rpc.at(-1), { type: 'switch_session', sessionPath: '/tmp/session.jsonl' }, 'saved session switch trims the selected session path');
+  const rpcCountBeforeBlankSessionAction = rpc.length;
+  assert.equal(switchSavedSession('   ', { store, client }), false);
+  assert.equal(forkSessionEntry('', { store, client }), false);
+  assert.equal(openBranchPath('   ', { store, client }), false);
+  assert.equal(rpc.length, rpcCountBeforeBlankSessionAction, 'blank saved-session/tree actions do not send RPC payloads');
 
-  assert.equal(forkSessionEntry('entry-1', { store, client }), true);
-  assert.deepEqual(rpc.at(-1), { type: 'fork', entryId: 'entry-1' });
+  assert.equal(forkSessionEntry('  entry-1  ', { store, client }), true);
+  assert.deepEqual(rpc.at(-1), { type: 'fork', entryId: 'entry-1' }, 'fork trims the tree entry id');
 
-  assert.equal(openBranchPath('entry-2', { store, client }), true);
-  assert.deepEqual(rpc.at(-1), { type: 'phone_open_branch_path', entryId: 'entry-2' });
+  assert.equal(openBranchPath('  entry-2  ', { store, client }), true);
+  assert.deepEqual(rpc.at(-1), { type: 'phone_open_branch_path', entryId: 'entry-2' }, 'open branch path trims the tree entry id');
 }
 
 function testSavedSessionAndTreeAdapters() {
@@ -1179,6 +1360,22 @@ async function testPromptSubmissionRules() {
 
   assert.deepEqual(await submitPrompt({ store, client }), { status: 'empty' }, 'empty prompts are ignored');
 
+  const localSubmitStore = createPiPhoneStateStore();
+  localSubmitStore.setComposerText('/compact');
+  const messageCountBeforeLocalCommand = localSubmitStore.snapshot().messages.items.length;
+  assert.equal((await submitPrompt({ store: localSubmitStore, client })).status, 'handled');
+  assert.deepEqual(rpc.at(-1), { type: 'compact' }, 'submitPrompt dispatches mutating local commands instead of prompt RPC');
+  assert.equal(localSubmitStore.snapshot().composer.text, '', 'handled local commands clear the composer after submit');
+  assert.equal(localSubmitStore.snapshot().messages.items.length, messageCountBeforeLocalCommand, 'handled local commands do not append optimistic prompt messages');
+
+  const blockedLocalCommandStore = createPiPhoneStateStore();
+  blockedLocalCommandStore.addAttachments([attachment('blocked-local-image', 1, '⟦img1⟧')]);
+  blockedLocalCommandStore.setComposerText('/compact ⟦img1⟧');
+  const rpcCountBeforeBlockedLocalCommand = rpc.length;
+  assert.equal((await submitPrompt({ store: blockedLocalCommandStore, client })).status, 'blocked');
+  assert.equal(rpc.length, rpcCountBeforeBlockedLocalCommand, 'local commands with image attachments do not send mutating RPC payloads');
+  assert.match(blockedLocalCommandStore.snapshot().feedback.toasts.at(-1)?.text || '', /do not support image attachments/);
+
   store.setComposerText('hello pi');
   assert.equal((await submitPrompt({ store, client })).status, 'sent');
   assert.deepEqual(rpc.at(-1), { type: 'prompt', message: 'hello pi' });
@@ -1194,11 +1391,50 @@ async function testPromptSubmissionRules() {
   assert.deepEqual(local.at(-1), { type: 'slash-command', text: '/ext run' });
   assert.equal(store.snapshot().quota.forceRefresh, true, 'extension slash commands request a quota refresh');
 
+  store.setComposerText('/ext from composer');
+  const rpcCountBeforeExtensionSubmit = rpc.length;
+  assert.equal((await submitPrompt({ store, client })).status, 'handled');
+  assert.deepEqual(local.at(-1), { type: 'slash-command', text: '/ext from composer' });
+  assert.equal(rpc.length, rpcCountBeforeExtensionSubmit, 'known extension slash commands never fall through to prompt RPC');
+
+  const unknownCatalogStore = createPiPhoneStateStore();
+  unknownCatalogStore.setStatus({ cwd: '/repo', hasToken: false, isRunning: true, host: '127.0.0.1', port: 3000, childRunning: true, isStreaming: false, isCompacting: false, lastError: '', childPid: null, sessionWorkerId: 'worker', sessionKind: 'parallel' });
+  unknownCatalogStore.setComposerText('/ext run');
+  const rpcCountBeforeUnresolved = rpc.length;
+  const localCountBeforeUnresolved = local.length;
+  assert.equal((await submitPrompt({ store: unknownCatalogStore, client })).status, 'blocked');
+  assert.deepEqual(rpc.at(-1), { type: 'get_commands' }, 'unresolved slash commands refresh the unknown command catalog instead of prompting');
+  assert.equal(rpc.length, rpcCountBeforeUnresolved + 1);
+  assert.equal(local.length, localCountBeforeUnresolved, 'unresolved slash commands are not sent as local slash commands without catalog confirmation');
+  assert.match(unknownCatalogStore.snapshot().feedback.toasts.at(-1)?.text || '', /Slash commands are still loading/);
+  assert.equal(unknownCatalogStore.snapshot().composer.text, '/ext run', 'blocked unresolved slash commands stay in the composer for retry');
+
+  const emptyCatalogStore = createPiPhoneStateStore();
+  emptyCatalogStore.setCommands([]);
+  emptyCatalogStore.setComposerText('/not-a-command but valid prompt text');
+  const rpcCountBeforeEmptyCatalogPrompt = rpc.length;
+  assert.equal((await submitPrompt({ store: emptyCatalogStore, client })).status, 'sent');
+  assert.deepEqual(
+    rpc.at(-1),
+    { type: 'prompt', message: '/not-a-command but valid prompt text' },
+    'slash-looking prompts are allowed after the command catalog is loaded empty',
+  );
+  assert.equal(rpc.length, rpcCountBeforeEmptyCatalogPrompt + 1);
+
   store.setCommands([{ name: 'skill', source: 'skill' }]);
   store.setStatus({ cwd: '/repo', hasToken: false, isRunning: true, host: '127.0.0.1', port: 3000, childRunning: true, isStreaming: true, isCompacting: false, lastError: '', childPid: null, sessionWorkerId: 'worker', sessionKind: 'parallel' });
+  assert.equal(canSteer(store.snapshot()), true, 'composer can expose Steer while a response is streaming and no submit is active');
+  store.updateComposer({ isSubmitting: true });
+  assert.equal(canSteer(store.snapshot()), false, 'composer hides Steer while a submission is already in progress');
+  store.updateComposer({ isSubmitting: false });
+
   store.setComposerText('/skill arg');
   assert.equal((await submitPrompt({ store, client })).status, 'handled');
   assert.deepEqual(local.at(-1), { type: 'slash-command', text: '/skill arg', streamingBehavior: 'followUp' });
+
+  store.setComposerText('/skill steer');
+  assert.equal((await submitPrompt({ store, client, steer: true })).status, 'handled');
+  assert.deepEqual(local.at(-1), { type: 'slash-command', text: '/skill steer', streamingBehavior: 'steer' }, 'steered non-extension slash commands use steer streaming behavior');
 
   store.setComposerText('follow up');
   assert.equal((await submitPrompt({ store, client })).status, 'sent');
@@ -1207,6 +1443,30 @@ async function testPromptSubmissionRules() {
   store.setComposerText('steer this');
   assert.equal((await submitPrompt({ store, client, steer: true })).status, 'sent');
   assert.deepEqual(rpc.at(-1), { type: 'prompt', message: 'steer this', streamingBehavior: 'steer' });
+
+  const imageStore = createPiPhoneStateStore();
+  const firstImage = { ...attachment('prompt-first', 1, '⟦img1⟧'), file: new File(['one'], 'one.png', { type: 'image/png' }), size: 3 };
+  const secondImage = { ...attachment('prompt-second', 2, '⟦img2⟧'), file: new File(['two'], 'two.png', { type: 'image/png' }), size: 3 };
+  imageStore.addAttachments([firstImage, secondImage]);
+  imageStore.setComposerText('Compare ⟦img2⟧ then ⟦img1⟧ and repeat ⟦img2⟧');
+  assert.equal((await submitPrompt({ store: imageStore, client })).status, 'sent');
+  const imagePrompt = rpc.at(-1) as { type?: string; message?: string; images?: Array<{ data: string; mimeType: string }> };
+  assert.equal(imagePrompt.type, 'prompt');
+  assert.equal(imagePrompt.message, 'Compare ⟦img2⟧ then ⟦img1⟧ and repeat ⟦img2⟧');
+  assert.deepEqual(
+    imagePrompt.images?.map((image) => image.data),
+    ['dHdv', 'b25l', 'dHdv'],
+    'submitted prompt image payload follows every inline token occurrence',
+  );
+  assert.deepEqual(imagePrompt.images?.map((image) => image.mimeType), ['image/png', 'image/png', 'image/png']);
+  assert.equal(imageStore.snapshot().attachments.items.length, 0, 'successful image prompt submission clears attachments');
+  const submittedImageMessage = imageStore.snapshot().messages.items.at(-1);
+  assert.equal(submittedImageMessage?.kind, 'user', 'optimistic image prompt records a local user message');
+  assert.equal(
+    submittedImageMessage?.kind === 'user' ? submittedImageMessage.imageCount : undefined,
+    3,
+    'optimistic image prompt records submitted image count',
+  );
 
   store.updateComposer({ steerAvailable: true });
   assert.equal(abortGeneration({ store, client }), true);
@@ -1299,6 +1559,11 @@ function testExtensionUiRequestActions() {
   assert.equal(sendExtensionUiResponse({ id: 'input-1', value: 'stale' }, { store, client }), false);
   assert.match(store.snapshot().feedback.toasts.at(-1)?.text || '', /no longer pending/i, 'stale responses show an error toast');
 
+  store.setPendingUiRequest({ type: 'extension_ui_request', method: 'input', id: 'input-2', sessionWorkerId: 'worker-a', prefill: 'second prefill' });
+  assert.equal(sendExtensionUiResponse({ id: 'input-1', value: 'stale' }, { store, client }), false);
+  assert.equal(store.snapshot().uiRequests.pending?.id, 'input-2', 'stale responses do not clear a newer pending UI request');
+  assert.equal(extensionUiDraftValue(store.snapshot(), store.snapshot().uiRequests.pending), 'second prefill', 'new pending input remains actionable after stale response');
+
   store.setPendingUiRequest({ type: 'extension_ui_request', method: 'select', id: 'select-1', sessionWorkerId: 'worker-a', options: ['alpha', 'beta'] });
   assert.equal(sendExtensionUiResponse({ id: 'select-1', value: 'beta' }, { store, client }), true);
   assert.deepEqual(sent.at(-1), {
@@ -1321,8 +1586,17 @@ function testExtensionUiRequestActions() {
   });
 
   store.setPendingUiRequest({ type: 'extension_ui_request', method: 'confirm', id: 'confirm-1', sessionWorkerId: 'worker-a' });
+  assert.equal(sendExtensionUiResponse({ id: 'confirm-1', confirmed: false }, { store, client }), true);
+  assert.deepEqual(sent.at(-1), {
+    type: 'extension_ui_response',
+    sessionWorkerId: 'worker-a',
+    id: 'confirm-1',
+    confirmed: false,
+  });
+
+  store.setPendingUiRequest({ type: 'extension_ui_request', method: 'confirm', id: 'confirm-ownership', sessionWorkerId: 'worker-a' });
   store.setActiveSessionId('worker-b');
-  assert.equal(sendExtensionUiResponse({ id: 'confirm-1', confirmed: true }, { store, client }), false);
+  assert.equal(sendExtensionUiResponse({ id: 'confirm-ownership', confirmed: true }, { store, client }), false);
   assert.match(store.snapshot().feedback.toasts.at(-1)?.text || '', /another session/i, 'ownership is rechecked before response send');
 
   store.setActiveSessionId('worker-a');
@@ -1408,6 +1682,22 @@ async function testLoginTokenSubmissionAction() {
   assert.match(invalidStore.snapshot().auth.authError, /token was rejected/i);
   assert.match(invalidStore.snapshot().feedback.toasts.at(-1)?.text || '', /token was rejected/i);
 
+  invalidStore.pushToast('Extension warning', 'warning');
+  const recovered = await submitLoginToken('valid-token', { client: okClient, stateStore: invalidStore });
+  assert.equal(recovered.ok, true);
+  assert.equal(invalidStore.snapshot().auth.loginOpen, false);
+  assert.equal(invalidStore.snapshot().auth.authError, '');
+  assert.equal(
+    invalidStore.snapshot().feedback.toasts.some((toast) => /token was rejected/i.test(toast.text)),
+    false,
+    'successful login clears stale auth-error toasts',
+  );
+  assert.equal(
+    invalidStore.snapshot().feedback.toasts.some((toast) => toast.text === 'Extension warning'),
+    true,
+    'successful login preserves unrelated non-auth toasts',
+  );
+
   const emptyStore = createPiPhoneStateStore();
   const empty = await submitLoginToken('   ', { client: okClient, stateStore: emptyStore });
   assert.equal(empty.ok, false);
@@ -1467,6 +1757,29 @@ async function testQuotaContextVisibilityAndTransportFetch() {
   assert.equal(unsupportedDisplay.quotaSupported, false, 'unsupported providers do not expose Pi quota windows');
   assert.equal(unsupportedDisplay.primary, null, 'stale quota is hidden for unsupported models');
   assert.equal(unsupportedDisplay.visible, false, 'meta hides completely when unsupported model has no cwd/context to show');
+
+  const unsupportedWithContext = quotaContextDisplay({
+    cwd: '',
+    snapshot: {
+      model: { provider: 'openai-codex', id: 'o3', name: 'O3', contextWindow: 128_000 },
+      isStreaming: false,
+      isCompacting: false,
+      sessionFile: null,
+      sessionId: null,
+      messageCount: 1,
+      pendingMessageCount: 0,
+      contextUsage: { tokens: 32_000, contextWindow: 128_000, percent: 25 },
+    },
+    quota: {
+      visible: true,
+      limited: false,
+      primaryWindow: { label: '5h', text: '20%', resetAfterSeconds: null, usedPercent: 80, leftPercent: 20 },
+      secondaryWindow: null,
+    },
+  });
+  assert.equal(unsupportedWithContext.primary, null, 'unsupported models hide stale quota even when context usage remains visible');
+  assert.equal(unsupportedWithContext.contextUsage?.text, '25.0%/128k');
+  assert.equal(unsupportedWithContext.visible, true, 'unsupported models may still show non-quota composer context');
 
   const globals = globalThis as unknown as Record<string, unknown>;
   const previousWindow = globals.window;
@@ -1595,6 +1908,7 @@ export async function run() {
   testCommandAndPathSuggestionResponses();
   testLiveToolReducers();
   testToolPreviewAdapterFixtures();
+  testMobileLayoutAndPanelPersistenceFixtures();
   testLiveAssistantStreamingReducers();
   testLateAssistantEventPreservesSettledMessage();
   testMessageUpdateWholeAssistantFallback();

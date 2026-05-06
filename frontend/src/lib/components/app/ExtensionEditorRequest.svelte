@@ -1,11 +1,10 @@
 <script lang="ts">
-  import { tick } from 'svelte';
+  import { onMount, tick } from 'svelte';
   import { Button } from '$lib/components/ui/button/index.js';
   import { Textarea } from '$lib/components/ui/textarea/index.js';
   import type { PhoneExtensionUiClient } from '$lib/actions/extension-ui';
   import {
     extensionUiDraftValue,
-    extensionUiRequestKey,
     persistExtensionUiDraft,
     sendExtensionUiResponse,
   } from '$lib/actions/extension-ui';
@@ -20,20 +19,18 @@
 
   let { request, stateStore = piPhoneState, client }: Props = $props();
 
-  let appState = $derived($stateStore);
-  let requestKey = $derived(extensionUiRequestKey(request));
-  let draft = $state('');
-  let activeKey = $state('');
+  let draft = $state(initialDraftValue());
   let editorRef = $state<HTMLTextAreaElement | null>(null);
+
+  function initialDraftValue() {
+    return extensionUiDraftValue(stateStore.snapshot(), request);
+  }
 
   let placeholder = $derived(typeof (request as { placeholder?: unknown }).placeholder === 'string' ? String((request as { placeholder?: unknown }).placeholder) : 'Write your response…');
   let title = $derived(request.title || 'Edit text');
   let message = $derived(request.message || 'Review or edit the text below, then submit it to the extension.');
 
-  $effect(() => {
-    if (!requestKey || requestKey === activeKey) return;
-    activeKey = requestKey;
-    draft = extensionUiDraftValue(appState, request);
+  onMount(() => {
     void tick().then(() => editorRef?.focus());
   });
 

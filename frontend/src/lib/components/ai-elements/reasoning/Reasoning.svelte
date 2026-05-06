@@ -43,20 +43,22 @@
 
 	// Sync external props to context and local state
 	$effect(() => {
-		reasoningContext.isStreaming = isStreaming;
+		if (reasoningContext.isStreaming !== isStreaming) {
+			reasoningContext.isStreaming = isStreaming;
+		}
 	});
 
 	$effect(() => {
 		if (open !== undefined) {
-			isOpen = open;
-			reasoningContext.isOpen = open;
+			if (isOpen !== open) isOpen = open;
+			if (reasoningContext.isOpen !== open) reasoningContext.isOpen = open;
 		}
 	});
 
 	$effect(() => {
 		if (duration !== undefined) {
-			currentDuration = duration;
-			reasoningContext.duration = duration;
+			if (currentDuration !== duration) currentDuration = duration;
+			if (reasoningContext.duration !== duration) reasoningContext.duration = duration;
 		}
 	});
 

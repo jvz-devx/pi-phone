@@ -128,8 +128,10 @@ export function stripTokenFromPrompt(
   }
 
   let nextText = '';
-  let nextSelectionStart = selectionStart ?? value.length;
-  let nextSelectionEnd = selectionEnd ?? nextSelectionStart;
+  const originalSelectionStart = selectionStart ?? value.length;
+  const originalSelectionEnd = selectionEnd ?? originalSelectionStart;
+  let startAdjustment = 0;
+  let endAdjustment = 0;
   let offset = 0;
 
   while (offset < value.length) {
@@ -138,17 +140,19 @@ export function stripTokenFromPrompt(
 
     nextText += value.slice(offset, index);
 
-    if (index < nextSelectionStart) {
-      nextSelectionStart -= Math.min(token.length, nextSelectionStart - index);
+    if (index < originalSelectionStart) {
+      startAdjustment += Math.min(token.length, originalSelectionStart - index);
     }
-    if (index < nextSelectionEnd) {
-      nextSelectionEnd -= Math.min(token.length, nextSelectionEnd - index);
+    if (index < originalSelectionEnd) {
+      endAdjustment += Math.min(token.length, originalSelectionEnd - index);
     }
 
     offset = index + token.length;
   }
 
   nextText += value.slice(offset);
+  const nextSelectionStart = originalSelectionStart - startAdjustment;
+  const nextSelectionEnd = originalSelectionEnd - endAdjustment;
   const clampedStart = Math.max(0, Math.min(nextText.length, nextSelectionStart));
   const clampedEnd = Math.max(clampedStart, Math.min(nextText.length, nextSelectionEnd));
   return { text: nextText, selectionStart: clampedStart, selectionEnd: clampedEnd, changed: nextText !== value };

@@ -52,15 +52,24 @@ function ensurePublicClean() {
 }
 
 function ensureBuildOutput() {
-  const indexPath = join(frontendBuild, 'index.html');
-  if (!existsSync(indexPath)) {
-    throw new Error(`Expected SvelteKit static output at ${indexPath}`);
+  const requiredFiles = ['index.html', 'manifest.webmanifest', 'sw.js', 'icon.svg'];
+  for (const fileName of requiredFiles) {
+    const filePath = join(frontendBuild, fileName);
+    if (!existsSync(filePath)) {
+      throw new Error(`Expected SvelteKit static output at ${filePath}`);
+    }
   }
 
   const entries = readdirSync(frontendBuild);
   if (!entries.includes('_app')) {
     throw new Error('Expected frontend/build/_app from SvelteKit adapter-static output.');
   }
+}
+
+function validateStaticFallbackContract() {
+  console.log('Validating static fallback, PWA, and /api/* + /ws guardrails...');
+  run('npm', ['run', 'static:fallback:check']);
+  run('npm', ['run', 'svelte:validation:check']);
 }
 
 function timestamp() {
@@ -91,6 +100,7 @@ try {
   console.log('Building SvelteKit frontend without writing to public/...');
   run('npm', ['run', 'frontend:build']);
   ensureBuildOutput();
+  validateStaticFallbackContract();
 
   if (dryRun) {
     console.log('Dry run complete: public/ was not modified.');

@@ -21,6 +21,7 @@ export class ChainOfThoughtContext {
 	}
 
 	set isOpen(value: boolean) {
+		if (this.#isOpen === value) return;
 		this.#isOpen = value;
 		this.#onOpenChange?.(value);
 	}

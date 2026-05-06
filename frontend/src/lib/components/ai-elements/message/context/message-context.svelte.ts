@@ -21,19 +21,18 @@ export class MessageBranchController {
 	totalBranches = $state(0);
 
 	setCurrentBranch(branchIndex: number) {
-		if (this.totalBranches <= 0) {
-			this.currentBranch = Math.max(0, branchIndex);
-			return;
-		}
-
-		this.currentBranch = Math.min(Math.max(0, branchIndex), this.totalBranches - 1);
+		const nextBranch = this.totalBranches <= 0
+			? Math.max(0, branchIndex)
+			: Math.min(Math.max(0, branchIndex), this.totalBranches - 1);
+		if (this.currentBranch !== nextBranch) this.currentBranch = nextBranch;
 	}
 
 	setTotalBranches(count: number) {
-		this.totalBranches = Math.max(0, count);
+		const nextTotalBranches = Math.max(0, count);
+		if (this.totalBranches !== nextTotalBranches) this.totalBranches = nextTotalBranches;
 
 		if (this.totalBranches === 0) {
-			this.currentBranch = 0;
+			if (this.currentBranch !== 0) this.currentBranch = 0;
 			return;
 		}
 

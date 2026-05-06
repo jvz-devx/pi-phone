@@ -19,26 +19,21 @@
   let { item, stateStore = piPhoneState, class: className = '' }: Props = $props();
 
   let preview = $derived(buildToolPreview(item));
-  let storedOpen = $derived($stateStore.tools.panelOpen.get(item.id));
-  let open = $state(false);
-  let initializedKey = $state('');
+  let open = $state(initialOpenValue());
 
-  $effect(() => {
-    const key = `${item.id}:${preview.defaultOpen}`;
-    if (initializedKey === key) return;
-    initializedKey = key;
-    open = storedOpen ?? preview.defaultOpen;
-  });
+  function initialOpenValue() {
+    return stateStore.snapshot().tools.panelOpen.get(item.id) ?? buildToolPreview(item).defaultOpen;
+  }
 
-  $effect(() => {
-    if (storedOpen === undefined || storedOpen === open) return;
-    open = storedOpen;
-  });
+  function getOpen() {
+    return open;
+  }
 
-  $effect(() => {
-    if (!initializedKey || storedOpen === open) return;
-    stateStore.setToolPanelOpen(item.id, open);
-  });
+  function setOpen(nextOpen: boolean) {
+    if (open === nextOpen) return;
+    open = nextOpen;
+    stateStore.setToolPanelOpen(item.id, nextOpen);
+  }
 
   function badgeClass(variant: ToolPreviewBadgeVariant = 'neutral') {
     return cn(
@@ -106,7 +101,7 @@
 </script>
 
 <AiTool.Tool
-  bind:open
+  bind:open={getOpen, setOpen}
   class={cn('phone-tool-card mb-0 overflow-hidden border-border/65 bg-card/85 shadow-sm', className)}
   data-tool-id={item.id}
   data-tool-status={preview.status}

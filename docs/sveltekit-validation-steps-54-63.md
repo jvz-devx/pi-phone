@@ -98,44 +98,48 @@ These fixtures are meaningful regression coverage for transport and adapters, bu
 
 ### Step 60: steer/follow-up while streaming
 
-- While a response is streaming, type a follow-up and send normally.
+- While a response is streaming, type a follow-up and verify the composer shows Stop plus a Steer action once non-empty text is present.
+- Send normally.
 - Expected for supported sources: outbound prompt/slash command includes `streamingBehavior: "followUp"`.
-- While streaming and steer is offered, send with Steer.
-- Expected: outbound prompt includes `streamingBehavior: "steer"` and UI remains stable if backend rejects unsupported steering.
+- While streaming and Steer is visible, send with Steer.
+- Expected: outbound prompt/slash command includes `streamingBehavior: "steer"` where supported, the composer clears only after handled/sent submission, and UI remains stable if backend rejects unsupported steering.
 
 ### Step 61: image attachments and ordering
 
 - Attach one image; verify a `⟦img1⟧` token appears and the tray shows name/size/token.
-- Attach multiple images; move tokens in the prompt, duplicate a token, and remove one attachment.
+- Attach multiple images; move tokens in the prompt, duplicate a token, select text and insert/remove image tokens, and remove one attachment.
+- Submit a prompt whose token order differs from attachment insertion order.
 - Expected:
-  - Removed attachments also remove their tokens.
-  - Payload image order follows inline token occurrence order, with untokened remaining images last.
+  - Removed attachments also remove every matching token while preserving the adjusted cursor/selection.
+  - Payload image order follows every inline token occurrence order, including repeated tokens; attachments with no remaining inline token are removed during prompt sync and are not submitted.
   - Data URLs/blob previews render safely.
-  - Composer clears and object URLs are cleaned after successful submit.
+  - Composer clears, optimistic user message image count matches submitted payload images, and object URLs are cleaned after successful submit.
 
 ### Step 62: local commands
 
-Run and verify each local command path:
+Run and verify each local command path from the composer; where present, also verify the matching command browser or quick-action entry:
 
 - `/new` starts a new session.
-- `/compact` triggers compaction.
+- `/compact` triggers compaction and does not append an optimistic prompt message.
 - `/reload` is blocked while streaming/compacting and otherwise reloads extensions/skills/prompts/themes.
 - `/refresh` refreshes snapshot, commands, models, and quota.
 - `/stats` and `/cost` open stats/actions and request session stats.
 - `/commands` opens command browser.
 - `/sessions` opens saved sessions.
 - `/tree` opens session tree.
-- `/cd <path>` changes cwd and refreshes.
+- `/cd <path>` changes cwd and refreshes; `/cd` remains insert-only in autocomplete/browser flows.
 - `/thinking <level>` sets the level; `/thinking` opens picker.
-- `/model <provider/model>` sets the model; `/model` opens picker.
+- `/model <provider/model>` and `/model <display name>` set the model; `/model` opens picker and missing models show the picker with an explanatory toast.
 
-Expected for all local commands: image attachments are rejected with a clear message and are not sent.
+Expected for all local commands: image attachments are rejected with a clear message and no mutating RPC/local payload is sent.
 
 ### Step 63: remote slash commands and image restrictions
 
-- Load commands, then run an extension command without images.
-- Expected: local slash-command dispatch occurs and quota refresh is requested.
+- Load commands, then run an extension command without images from the parent session and from a newly spawned parallel session.
+- Expected: local slash-command dispatch occurs, the command is not sent as a normal prompt RPC, and quota refresh is requested for extension sources.
 - Attach an image and run an extension command.
 - Expected: blocked with an "Extension slash commands do not support image attachments" message; nothing is sent.
 - Run a skill/prompt slash command while idle and while streaming.
 - Expected: idle sends normally; streaming includes follow-up/steer behavior where supported.
+- Before commands have loaded, type an unknown slash-looking prompt.
+- Expected: the prompt is blocked with a command-refresh warning; after a successful loaded-empty command catalog, slash-looking normal prompts are allowed.

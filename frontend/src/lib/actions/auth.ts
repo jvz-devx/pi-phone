@@ -3,6 +3,7 @@ import type { PhoneStateStore } from '$lib/stores/pi-phone-state';
 
 const AUTH_REQUIRED_MESSAGE = 'Access token required. Enter the current /phone-start token.';
 const EMPTY_TOKEN_MESSAGE = 'Enter the current /phone-start token.';
+const AUTH_TOAST_SCOPE = 'auth';
 
 export type LoginTokenFragmentResult = {
   token: string | null;
@@ -110,7 +111,7 @@ export async function submitLoginToken(
   if (!nextToken) {
     options.stateStore.setAuthError(EMPTY_TOKEN_MESSAGE);
     options.stateStore.setLoginOpen(true);
-    options.stateStore.pushToast(EMPTY_TOKEN_MESSAGE, 'error');
+    options.stateStore.pushToast(EMPTY_TOKEN_MESSAGE, 'error', { scope: AUTH_TOAST_SCOPE });
     return { ok: false, error: EMPTY_TOKEN_MESSAGE };
   }
 
@@ -123,13 +124,14 @@ export async function submitLoginToken(
     options.stateStore.setHealth(health);
     options.stateStore.setLoginOpen(false);
     options.stateStore.clearAuthError();
+    options.stateStore.clearToasts({ scope: AUTH_TOAST_SCOPE });
     options.stateStore.clearBanner();
     return { ok: true, token: nextToken, health };
   } catch (error) {
     const message = loginErrorMessage(error);
     options.stateStore.setAuthError(message);
     options.stateStore.setLoginOpen(true);
-    options.stateStore.pushToast(message, 'error');
+    options.stateStore.pushToast(message, 'error', { scope: AUTH_TOAST_SCOPE });
     return { ok: false, error: message };
   }
 }

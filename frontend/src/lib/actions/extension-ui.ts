@@ -52,8 +52,18 @@ export function sendExtensionUiResponse(
   const pendingId = pending?.id == null ? '' : String(pending.id);
   const responseId = payload.id == null ? '' : String(payload.id);
 
-  if (!pending || !pendingId || !responseId || pendingId !== responseId) {
+  if (!pending) {
+    store.pushToast('That UI request is no longer pending.', 'error');
+    return false;
+  }
+
+  if (!pendingId) {
     store.clearPendingUiRequest();
+    store.pushToast('That UI request is no longer pending.', 'error');
+    return false;
+  }
+
+  if (!responseId || pendingId !== responseId) {
     store.pushToast('That UI request is no longer pending.', 'error');
     return false;
   }

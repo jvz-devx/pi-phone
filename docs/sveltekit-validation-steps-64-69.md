@@ -40,7 +40,7 @@ Open the Vite URL, usually `http://127.0.0.1:5173/`, log in with `qa-token`, and
 
 ## Manual checklist
 
-### Step 64: autocomplete
+### Step 64: autocomplete and selection behavior
 
 - Type `/` and verify local commands appear with local badges.
 - Type a remote command prefix such as `/rev` after commands are loaded and verify extension/prompt/skill commands appear beside local matches.
@@ -48,30 +48,32 @@ Open the Vite URL, usually `http://127.0.0.1:5173/`, log in with `qa-token`, and
 - Pick insert-style `/cd`; expected: `/cd ` is inserted without execution.
 - Type `/cd src/` and wait for suggestions; expected: local command payload `{ type: "path-suggestions", mode: "cd", query: "src/…" }`, directory/file chips render, selecting a directory keeps the cursor in the path, selecting a file inserts a trailing space.
 - Type normal text with `@src/`; expected: mention suggestions use `mode: "mention"`, render as `@path`, and do not trigger inside `email@host`.
+- Exercise non-collapsed text selections in the composer: replace selected text with image tokens, remove repeated image tokens, and accept autocomplete while the cursor is inside a token.
+- Expected: selected text is replaced, cursor/selection remains adjusted after token stripping, and autocomplete replacement affects only the active token.
 
 ### Step 65: model and thinking
 
-- Open the model picker from quick actions and `/model`; expected: current model is highlighted, provider/model id is visible, search works, selecting a model sends `{ type: "set_model", provider, modelId }`, closes the sheet, and refreshes quota/context.
-- Run `/model <provider>/<id>` and `/model <display name>`; expected: matching model switches directly.
+- Open the model picker from quick actions and `/model`; expected: current model is highlighted, provider/model id is visible, search works, selecting a model sends `{ type: "set_model", provider, modelId }`, closes the sheet, shows a success toast on response, and forces quota/context refresh.
+- Run `/model <provider>/<id>` and `/model <display name>`; expected: matching model switches directly using the same payload as the picker.
 - Run `/model missing`; expected: model picker opens and an explanatory toast appears.
 - Open thinking picker from quick actions and `/thinking`; expected: current level is highlighted.
-- Select each supported level where safe; expected: `{ type: "set_thinking_level", level }` is sent and UI refreshes.
+- Select each supported level where safe and run `/thinking <level>`; expected: `{ type: "set_thinking_level", level }` is sent, the sheet closes, a success toast appears on response, and state refreshes without forcing quota.
 
 ### Step 66: parent and parallel sessions
 
 - Open active sessions; expected: parent and parallel groups show current/live/pending/model/message-count bits.
 - Click a parallel session; expected: `session-select` is sent, pending UI request/snapshot view clears, and the selected session becomes current after refresh.
-- Click New Parent; expected: parent-session-new message is sent and UI follows latest.
-- Click New Parallel; expected: session-spawn message is sent and the new worker appears after catalog refresh.
-- Force or encounter a parent `commandContextAvailable: false` state; expected: New Parent is disabled or blocked with a fresh-command-context warning and a refresh request.
+- Click New Parent; expected: `session-parent-new` message is sent, stale pending UI/snapshot view clears, and UI follows latest.
+- Click New Parallel; expected: `session-spawn` message is sent, stale pending UI/snapshot view clears, and the new worker appears after catalog refresh.
+- Force or encounter a parent `commandContextAvailable: false` state via active-session catalog or status-only state; expected: New Parent is disabled or blocked with a fresh-command-context warning, no `session-parent-new` message is sent, and a refresh request is made.
 
 ### Step 67: saved sessions and tree
 
 - Open saved sessions; expected: parent sessions are grouped separately from parallel sessions, current session is highlighted, paths and previews are visible.
-- Click Switch on a saved session; expected: `{ type: "switch_session", sessionPath }`, snapshot clears, and refreshed messages load.
-- Click Fork where an entry id is exposed; expected: `{ type: "fork", entryId }`, refresh/quota flags are requested.
+- Click Switch on a saved session; expected: `{ type: "switch_session", sessionPath }` with a trimmed non-empty path, pending UI/snapshot view clears, and refreshed messages load.
+- Click Fork where an entry id is exposed; expected: `{ type: "fork", entryId }` with a trimmed non-empty id, refresh/quota flags are requested, and blank ids send nothing.
 - Open the session tree; expected: current path/current leaf/branch points/model-change labels render.
-- Click Open path on a branch node; expected: `{ type: "phone_open_branch_path", entryId }` and a new session/path loads.
+- Click Open path on a branch node; expected: `{ type: "phone_open_branch_path", entryId }` with a trimmed non-empty id, pending UI/snapshot view clears, and a new session/path loads.
 
 ### Step 68: tool previews
 
@@ -89,8 +91,8 @@ Run or replay prompts that exercise these tools and inspect the rendered cards:
 Use an extension or fixture command that can emit UI requests:
 
 - `notify`: toast text and severity render.
-- `setStatus`: footer/status widget text updates.
-- `setWidget`: widget lines appear and empty lines/payload clear the widget.
+- `setStatus`: the Svelte extension status panel shows the footer/status text.
+- `setWidget`: widget lines appear in the same status panel and empty lines/payload clear the widget.
 - `setTitle`: custom title appears where Svelte UI exposes it.
 - `set_editor_text`: composer text is replaced.
 - `select`: dialog opens, options are focusable/clickable, submit sends selected value, cancel sends cancelled response.

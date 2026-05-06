@@ -33,6 +33,7 @@ export type PhoneToast = PhoneNotice & {
   id: string;
   createdAt: number;
   ttlMs: number;
+  scope?: string;
 };
 
 export type PhoneConnectionState = {
@@ -89,6 +90,7 @@ export type PhoneToolsState = {
 
 export type PhoneCommandsState = {
   available: PhoneCommand[];
+  loaded: boolean;
 };
 
 export type PhoneModelsState = {
@@ -176,6 +178,7 @@ export type PhoneToastOptions = {
   id?: string;
   createdAt?: number;
   ttlMs?: number;
+  scope?: string;
 };
 
 function cloneLastClose(close: PhoneConnectionState['lastClose']) {
@@ -298,6 +301,7 @@ export function createInitialPhoneState(token = ''): PhoneAppState {
     },
     commands: {
       available: [],
+      loaded: false,
     },
     models: {
       available: [],
@@ -438,7 +442,7 @@ export type PhoneStateStore = Readable<PhoneAppState> & {
   setNotification(text: string, kind?: PhoneNoticeKind): void;
   pushToast(text: string, kind?: PhoneNoticeKind, options?: PhoneToastOptions): string | null;
   dismissToast(id: string): void;
-  clearToasts(): void;
+  clearToasts(options?: { scope?: string }): void;
 };
 
 export function createPiPhoneStateStore(initialState: PhoneAppState = createInitialPhoneState()): PhoneStateStore {
@@ -708,7 +712,7 @@ export function createPiPhoneStateStore(initialState: PhoneAppState = createInit
   }
 
   function setCommands(commands: PhoneCommand[]) {
-    updateSection('commands', () => ({ available: [...commands] }));
+    updateSection('commands', () => ({ available: [...commands], loaded: true }));
   }
 
   function setCommandSheetCategory(category: string) {
@@ -966,6 +970,7 @@ export function createPiPhoneStateStore(initialState: PhoneAppState = createInit
               id,
               text: cleanText,
               kind,
+              scope: options.scope,
               createdAt: options.createdAt ?? Date.now(),
               ttlMs: options.ttlMs ?? 3500,
             },
@@ -983,8 +988,11 @@ export function createPiPhoneStateStore(initialState: PhoneAppState = createInit
     }));
   }
 
-  function clearToasts() {
-    updateSection('feedback', (feedback) => ({ ...feedback, toasts: [] }));
+  function clearToasts(options: { scope?: string } = {}) {
+    updateSection('feedback', (feedback) => ({
+      ...feedback,
+      toasts: options.scope ? feedback.toasts.filter((toast) => toast.scope !== options.scope) : [],
+    }));
   }
 
   return {

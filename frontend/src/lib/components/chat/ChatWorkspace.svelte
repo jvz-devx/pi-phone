@@ -6,6 +6,7 @@
   import { Shimmer } from '$lib/components/ai-elements/shimmer/index.js';
   import { Button } from '$lib/components/ui/button/index.js';
   import { conversationItems } from '$lib/adapters/message-adapter';
+  import { shouldShowJumpToLatest } from '$lib/actions/mobile-layout';
   import { piPhoneState, type PhoneStateStore } from '$lib/stores/pi-phone-state';
   import type { PhoneUiMessage } from '$lib/types/pi-phone';
   import { cn } from '$lib/utils';
@@ -17,6 +18,7 @@
   const PROGRAMMATIC_SCROLL_GUARD_MS = 700;
   const USER_SCROLL_INTENT_MS = 400;
   const JUMP_LATEST_EVENT = 'pi-phone:jump-latest';
+  const VIEWPORT_CHANGE_EVENT = 'pi-phone:viewport-change';
 
   type PendingMessageScroll = {
     force: boolean;
@@ -57,7 +59,7 @@
   );
   let hasRenderableContent = $derived(Boolean(renderedItems.length));
   let contentSignature = $derived(renderedItems.map(itemSignature).join('\n'));
-  let jumpToLatestVisible = $derived(hasRenderableContent && !appState.messages.followLatest && !nearBottom);
+  let jumpToLatestVisible = $derived(shouldShowJumpToLatest(hasRenderableContent, appState.messages.followLatest, nearBottom));
   let bottomPadding = $derived(`calc(${Math.max(0, bottomReserve)}px + env(safe-area-inset-bottom))`);
   let loadingConversation = $derived(
     !hasRenderableContent &&
@@ -165,6 +167,11 @@
     requestScrollToBottom({ force: true, behavior: 'smooth' });
   }
 
+  function handleViewportChange() {
+    refreshNearBottom();
+    if (stateStore.snapshot().messages.followLatest) requestScrollToBottom({ force: true, behavior: 'auto' });
+  }
+
   $effect(() => {
     const signature = contentSignature;
     if (signature === lastContentSignature) return;
@@ -193,7 +200,11 @@
   onMount(() => {
     refreshNearBottom();
     window.addEventListener(JUMP_LATEST_EVENT, jumpToLatest);
-    return () => window.removeEventListener(JUMP_LATEST_EVENT, jumpToLatest);
+    window.addEventListener(VIEWPORT_CHANGE_EVENT, handleViewportChange);
+    return () => {
+      window.removeEventListener(JUMP_LATEST_EVENT, jumpToLatest);
+      window.removeEventListener(VIEWPORT_CHANGE_EVENT, handleViewportChange);
+    };
   });
 
   onDestroy(() => {

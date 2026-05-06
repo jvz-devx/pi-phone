@@ -18,6 +18,16 @@ function assertNotIncludes(source, needle, message) {
   assert.ok(!source.includes(needle), message || `Expected source not to include ${needle}`);
 }
 
+function assertOrdered(source, labels) {
+  let previousIndex = -1;
+  for (const [label, needle] of labels) {
+    const index = source.indexOf(needle, previousIndex + 1);
+    assert.notEqual(index, -1, `Expected ${label} after the previous guardrail marker.`);
+    assert.ok(index > previousIndex, `Expected ${label} to appear after the previous guardrail marker.`);
+    previousIndex = index;
+  }
+}
+
 function assertNoMissingIndexAssets(indexHtml, buildDir) {
   const assetMatches = [...indexHtml.matchAll(/\b(?:src|href)="([^"]+)"/g)].map((match) => match[1]);
   for (const assetPath of assetMatches) {
@@ -29,6 +39,8 @@ function assertNoMissingIndexAssets(indexHtml, buildDir) {
   }
 }
 
+const rootPackage = JSON.parse(await readRepoFile('package.json'));
+const releaseScript = await readRepoFile('scripts/release-sveltekit-public.mjs');
 const appShell = await readRepoFile('frontend/src/lib/components/app/AppShell.svelte');
 const inspectorPanel = await readRepoFile('frontend/src/lib/components/app/InspectorPanel.svelte');
 const chatWorkspace = await readRepoFile('frontend/src/lib/components/chat/ChatWorkspace.svelte');
@@ -42,6 +54,24 @@ const serviceWorker = await readRepoFile('frontend/static/sw.js');
 const runtime = await readRepoFile('src/extension/phone-server-runtime.ts');
 
 assertIncludes(appHtml, '<link rel="manifest" href="%sveltekit.assets%/manifest.webmanifest"', 'Svelte app must link the PWA manifest.');
+
+assert.equal(rootPackage.scripts['frontend:sync-public:dry-run'], 'node scripts/release-sveltekit-public.mjs --dry-run', 'Dry-run cutover command must stay explicit.');
+assert.equal(rootPackage.scripts['frontend:sync-public'], 'node scripts/release-sveltekit-public.mjs --confirm', 'Public cutover command must require explicit confirmation.');
+for (const scriptName of ['test', 'frontend:build', 'frontend:check', 'frontend:test:fixtures']) {
+  assertNotIncludes(rootPackage.scripts[scriptName] || '', 'frontend:sync-public', `${scriptName} must not run the public cutover command.`);
+  assertNotIncludes(rootPackage.scripts[scriptName] || '', 'release-sveltekit-public', `${scriptName} must not invoke the release copy helper.`);
+}
+assertIncludes(releaseScript, "run('npm', ['run', 'static:fallback:check'])", 'Release dry-run/cutover must verify static fallback guardrails.');
+assertIncludes(releaseScript, "run('npm', ['run', 'svelte:validation:check'])", 'Release dry-run/cutover must verify PWA/static validation guardrails.');
+assertOrdered(releaseScript, [
+  ['explicit mode guard', 'ensureExplicitMode();'],
+  ['public clean guard', 'ensurePublicClean();'],
+  ['frontend build', "run('npm', ['run', 'frontend:build']);"],
+  ['build output check', 'ensureBuildOutput();'],
+  ['static fallback validation', 'validateStaticFallbackContract();'],
+  ['dry-run exit', 'if (dryRun) {'],
+  ['confirmed public copy', 'copyPublicWithBackup();'],
+]);
 
 assertIncludes(quotaContext, 'supportsPiQuotaForModel', 'Quota support helper must remain centralized for tests and UI.');
 assertIncludes(quotaContext, "provider === 'openai-codex'", 'Quota must be limited to the Pi openai-codex provider.');

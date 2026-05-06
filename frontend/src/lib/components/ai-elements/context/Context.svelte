@@ -30,10 +30,10 @@
 
 	// Update context when props change
 	$effect(() => {
-		contextInstance.usedTokens = usedTokens;
-		contextInstance.maxTokens = maxTokens;
-		contextInstance.usage = usage;
-		contextInstance.modelId = modelId;
+		if (contextInstance.usedTokens !== usedTokens) contextInstance.usedTokens = usedTokens;
+		if (contextInstance.maxTokens !== maxTokens) contextInstance.maxTokens = maxTokens;
+		if (contextInstance.usage !== usage) contextInstance.usage = usage;
+		if (contextInstance.modelId !== modelId) contextInstance.modelId = modelId;
 	});
 
 	setContextValue(contextInstance);

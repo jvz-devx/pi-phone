@@ -1,5 +1,5 @@
 <script lang="ts">
-  import { tick } from 'svelte';
+  import { onMount, tick } from 'svelte';
   import CircleAlert from '@lucide/svelte/icons/circle-alert';
   import LockKeyhole from '@lucide/svelte/icons/lock-keyhole';
   import { submitLoginToken, type PhoneLoginClient } from '$lib/actions/auth';
@@ -26,8 +26,7 @@
   let canDismiss = $derived(Boolean(booted && !appState.auth.health?.hasToken && appState.connection.connectionState !== 'auth-required'));
   let errorText = $derived(localError || appState.auth.authError);
   let tokenRef = $state<HTMLInputElement | null>(null);
-  let previousRequired = $state(false);
-  let previousDialogOpen = $state(false);
+  let previousRequired = false;
 
   async function focusTokenInput(select = false) {
     await tick();
@@ -35,8 +34,8 @@
     if (select) tokenRef?.select();
   }
 
-  function seedTokenInput() {
-    tokenInput = appState.auth.token || readStoredToken();
+  function seedTokenInput(nextState = stateStore.snapshot()) {
+    tokenInput = nextState.auth.token || readStoredToken();
   }
 
   async function handleSubmit() {
@@ -65,37 +64,45 @@
     dialogOpen = false;
   }
 
-  $effect(() => {
-    if (required && !previousRequired) {
-      seedTokenInput();
+  function syncLoginWithState(nextState = stateStore.snapshot()) {
+    const nextRequired = Boolean(nextState.auth.loginOpen || nextState.connection.connectionState === 'auth-required');
+
+    if (nextRequired && !previousRequired) {
+      seedTokenInput(nextState);
       localError = '';
       dialogOpen = true;
       void focusTokenInput(true);
     }
 
-    if (!required && previousRequired) {
+    if (!nextRequired && previousRequired) {
       localError = '';
       dialogOpen = false;
     }
 
-    previousRequired = required;
-  });
+    previousRequired = nextRequired;
+  }
 
-  $effect(() => {
-    if (previousDialogOpen && !dialogOpen && required) {
-      if (canDismiss) {
-        continueWithoutToken();
-      } else {
-        dialogOpen = true;
-        void focusTokenInput();
-      }
+  function getDialogOpen() {
+    return dialogOpen;
+  }
+
+  function setDialogOpen(nextOpen: boolean) {
+    if (dialogOpen === nextOpen) return;
+    dialogOpen = nextOpen;
+    if (nextOpen || !required) return;
+
+    if (canDismiss) {
+      continueWithoutToken();
+    } else {
+      dialogOpen = true;
+      void focusTokenInput();
     }
+  }
 
-    previousDialogOpen = dialogOpen;
-  });
+  onMount(() => stateStore.subscribe((nextState) => syncLoginWithState(nextState)));
 </script>
 
-<Dialog.Root bind:open={dialogOpen}>
+<Dialog.Root bind:open={getDialogOpen, setDialogOpen}>
   <Dialog.Content class="max-w-md gap-5 rounded-3xl border bg-card p-5 shadow-md sm:max-w-md" showCloseButton={canDismiss} aria-describedby="login-description">
     <Dialog.Header>
       <div class="flex items-start gap-3">

@@ -270,6 +270,7 @@ function applyResponseSuccess(state: PhoneAppState, payload: PhoneRpcResponse & 
     case 'get_commands': {
       const data = asRecord(payload.data);
       state.commands.available = Array.isArray(data?.commands) ? (data.commands as PhoneAppState['commands']['available']) : [];
+      state.commands.loaded = true;
       return;
     }
 
@@ -353,7 +354,7 @@ function applyResponseSuccess(state: PhoneAppState, payload: PhoneRpcResponse & 
 
     case 'set_model':
       setNotification(state, 'Model updated.');
-      requestRefresh(state);
+      requestRefresh(state, { forceQuota: true });
       return;
 
     case 'set_thinking_level':
@@ -548,7 +549,10 @@ function handleSnapshotEnvelope(state: PhoneAppState, envelope: PhoneSnapshotEnv
   state.snapshot.workerId = envelope.sessionWorkerId || state.sessions.activeSessionId || null;
   state.status = { ...(state.status || ({} as PhoneStatus)), isStreaming: Boolean(envelope.state?.isStreaming) } as PhoneStatus;
   state.messages.items = transformPhoneMessages(envelope.messages);
-  state.commands.available = envelope.commands || state.commands.available;
+  if (envelope.commands) {
+    state.commands.available = envelope.commands;
+    state.commands.loaded = true;
+  }
   state.uiRequests.pending = null;
   clearTransientState(state);
 

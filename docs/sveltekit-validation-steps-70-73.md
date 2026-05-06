@@ -27,7 +27,7 @@ Current automated coverage added/extended for these steps:
 | 70 | `frontend/src/lib/adapters/quota-context.ts` centralizes supported-model detection (`openai-codex` + `gpt-*`), context usage text, and stale quota hiding. Fixture tests assert supported GPT quota displays/fetches and unsupported models clear/hide quota without calling `/api/quota`. Static checks assert `ComposerMeta` and `PhoneClient` use the same helper. |
 | 71 | Static validation checks mobile safe-area CSS, visual viewport/keyboard inset variables, bottom sheet CSS, touch target media query, ChatWorkspace follow-latest thresholds, bottom reserve, and accessible jump-to-latest wiring. |
 | 72 | Static validation checks the desktop `1024px` split-workspace breakpoint, persisted left/right rail state, grid template columns, inspector landmark, and quick actions presence. |
-| 73 | Static validation checks PWA manifest content, Svelte-specific service worker behavior, `/api/*` and `/ws` service-worker bypass, token query redirect/cache purge, built SvelteKit `index.html` asset references when `frontend/build` exists, and `PhoneServerRuntime` API/static fallback ordering. `scripts/check-phone-static-fallback.mjs` also verifies adapter-static fallback and server MIME/fallback routes. |
+| 73 | Static validation checks PWA manifest content, Svelte-specific service worker behavior, `/api/*` and `/ws` service-worker bypass, token query redirect/cache purge, built SvelteKit `index.html` asset references when `frontend/build` exists, `PhoneServerRuntime` API/static fallback ordering, and release-script guardrails that keep public copy out of routine test/build scripts. `scripts/check-phone-static-fallback.mjs` also verifies adapter-static fallback and server MIME/fallback routes, and the guarded dry-run runs both static validation commands before any confirmed public copy. |
 
 These checks are regression coverage; they do not prove real mobile keyboard ergonomics, actual installed-PWA behavior, or live server/browser behavior.
 
@@ -69,10 +69,12 @@ These checks are regression coverage; they do not prove real mobile keyboard erg
 
    ```bash
    npm run frontend:build
+   npm run static:fallback:check
    npm run svelte:validation:check
+   npm run frontend:sync-public:dry-run
    ```
 
-2. Only after parity approval, use the release sync script to copy `frontend/build` into `public/`.
+2. Confirm the dry-run reports success and `git status --short -- public` remains empty. Only after parity approval, use the release sync script to copy `frontend/build` into `public/`.
 3. Start the Pi Phone server and load:
    - `/`
    - `/manifest.webmanifest`

@@ -1,5 +1,5 @@
 <script lang="ts">
-  import { tick } from 'svelte';
+  import { onMount, tick } from 'svelte';
   import * as Dialog from '$lib/components/ui/dialog/index.js';
   import { Button } from '$lib/components/ui/button/index.js';
   import { Input } from '$lib/components/ui/input/index.js';
@@ -42,47 +42,69 @@
   let inputRef = $state<HTMLInputElement | null>(null);
   let selectRef = $state<HTMLSelectElement | null>(null);
 
+  type ExtensionStatusWidget = { key: string; lines: string[] };
+
   let title = $derived(request?.title || 'Action required');
   let message = $derived(request?.message || 'An extension is waiting for your response.');
   let options = $derived(selectOptions(request));
   let placeholder = $derived(typeof (request as { placeholder?: unknown } | null)?.placeholder === 'string' ? String((request as { placeholder?: unknown }).placeholder) : 'Type your response…');
+  let footerStatus = $derived(appState.uiRequests.footerStatus.trim());
+  let statusWidgets = $derived.by<ExtensionStatusWidget[]>(() =>
+    [...appState.uiRequests.widgets.entries()]
+      .map(([key, lines]) => ({ key, lines: lines.filter((line) => line.trim()) }))
+      .filter((widget) => widget.lines.length > 0),
+  );
+  let showStatusPanel = $derived(Boolean(footerStatus || statusWidgets.length));
 
   function selectOptions(value: PhoneExtensionUiRequest | null) {
     if (!value || value.method !== 'select' || !Array.isArray(value.options)) return [];
     return value.options.filter((option): option is string => typeof option === 'string');
   }
 
-  $effect(() => {
-    if (request && !ownedByActiveSession) {
+  function syncDialogWithState(nextState = stateStore.snapshot()) {
+    const nextRequest = nextState.uiRequests.pending;
+    const nextOwnedByActiveSession = isExtensionUiRequestOwnedByActiveSession(nextState, nextRequest);
+    const nextActionableRequest = Boolean(nextRequest && ['select', 'confirm', 'input', 'editor'].includes(nextRequest.method));
+    const nextRequestKey = extensionUiRequestKey(nextRequest);
+    const nextOptions = selectOptions(nextRequest);
+
+    if (nextRequest && !nextOwnedByActiveSession) {
       stateStore.clearPendingUiRequest();
       stateStore.pushToast('That UI request belongs to another session.', 'error');
       return;
     }
 
-    if (!request || !isActionableRequest) {
+    if (!nextRequest || !nextActionableRequest) {
       activeDialogKey = '';
       responding = false;
       dialogOpen = false;
       return;
     }
 
-    if (requestKey && requestKey !== activeDialogKey) {
-      activeDialogKey = requestKey;
+    if (nextRequestKey && nextRequestKey !== activeDialogKey) {
+      activeDialogKey = nextRequestKey;
       responding = false;
-      draft = extensionUiDraftValue(appState, request);
-      selectedValue = options[0] || '';
+      draft = extensionUiDraftValue(nextState, nextRequest);
+      selectedValue = nextOptions[0] || '';
       dialogOpen = true;
       void tick().then(() => {
-        if (request?.method === 'input') inputRef?.focus();
-        if (request?.method === 'select') selectRef?.focus();
+        if (nextRequest.method === 'input') inputRef?.focus();
+        if (nextRequest.method === 'select') selectRef?.focus();
       });
     }
-  });
+  }
 
-  $effect(() => {
-    if (!request || !activeDialogKey || responding || dialogOpen) return;
-    cancelRequest();
-  });
+  function getDialogOpen() {
+    return dialogOpen;
+  }
+
+  function setDialogOpen(nextOpen: boolean) {
+    if (dialogOpen === nextOpen) return;
+    dialogOpen = nextOpen;
+    if (!nextOpen && request && activeDialogKey && !responding) cancelRequest();
+  }
+
+  onMount(() => stateStore.subscribe((nextState) => syncDialogWithState(nextState)));
 
   function respond(payload: ExtensionUiResponsePayload) {
     responding = true;
@@ -128,15 +150,46 @@
   }
 </script>
 
+{#if showStatusPanel}
+  <aside
+    class="fixed inset-x-3 bottom-[calc(env(safe-area-inset-bottom)+5.5rem)] z-30 mx-auto max-w-xl rounded-2xl border border-primary/20 bg-card/95 p-3 text-card-foreground shadow-md backdrop-blur sm:inset-x-auto sm:right-4 sm:w-80"
+    aria-label="Extension status"
+    aria-live="polite"
+    role="status"
+  >
+    <div class="grid gap-3">
+      {#if footerStatus}
+        <div class="rounded-xl border border-primary/20 bg-primary/10 px-3 py-2">
+          <p class="text-[0.65rem] font-semibold uppercase tracking-[0.18em] text-primary">Extension status</p>
+          <p class="mt-1 text-sm leading-5">{footerStatus}</p>
+        </div>
+      {/if}
+
+      {#each statusWidgets as widget (widget.key)}
+        <section class="rounded-xl border bg-background/80 px-3 py-2" aria-label={`Extension widget ${widget.key}`}>
+          <p class="break-all font-mono text-[0.65rem] font-semibold uppercase tracking-[0.16em] text-muted-foreground">{widget.key}</p>
+          <ul class="mt-1 grid gap-1 text-sm leading-5">
+            {#each widget.lines as line}
+              <li class="break-words">{line}</li>
+            {/each}
+          </ul>
+        </section>
+      {/each}
+    </div>
+  </aside>
+{/if}
+
 {#if request && isActionableRequest && ownedByActiveSession}
-  <Dialog.Root bind:open={dialogOpen}>
+  <Dialog.Root bind:open={getDialogOpen, setDialogOpen}>
     {#if request.method === 'editor'}
       <Dialog.Content
         class="inset-0 left-0 top-0 h-dvh max-h-dvh w-screen max-w-none translate-x-0 translate-y-0 overflow-hidden rounded-none p-0 sm:inset-auto sm:left-1/2 sm:top-1/2 sm:h-[min(82dvh,52rem)] sm:max-w-4xl sm:-translate-x-1/2 sm:-translate-y-1/2 sm:rounded-2xl"
         showCloseButton={false}
         aria-label={title}
       >
-        <ExtensionEditorRequest {request} {stateStore} {client} />
+        {#key requestKey}
+          <ExtensionEditorRequest {request} {stateStore} {client} />
+        {/key}
       </Dialog.Content>
     {:else}
       <Dialog.Content class="max-w-[calc(100%-1.5rem)] rounded-2xl p-0 sm:max-w-lg" showCloseButton={false} aria-label={title} aria-describedby="extension-request-description">
