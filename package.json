@@ -38,7 +38,8 @@
   "scripts": {
     "typecheck": "tsc --noEmit",
     "static:fallback:check": "node scripts/check-phone-static-fallback.mjs",
-    "test": "npm run typecheck && npm run static:fallback:check && npm run frontend:test:fixtures",
+    "svelte:validation:check": "node scripts/check-svelte-validation-coverage.mjs",
+    "test": "npm run typecheck && npm run static:fallback:check && npm run svelte:validation:check && npm run frontend:test:fixtures",
     "frontend:install": "npm install --prefix frontend",
     "frontend:test:fixtures": "npm run test:fixtures --prefix frontend",
     "frontend:dev": "npm run dev --prefix frontend",

@@ -6,6 +6,8 @@ import {
   detectCdAutocompleteContext,
   detectMentionAutocompleteContext,
   detectSlashCommandAutocompleteContext,
+  requestPathSuggestions,
+  slashCommandItems,
   updateAutocomplete,
 } from '$lib/actions/autocomplete';
 import { consumeLoginTokenFromUrl, consumeTokenFromFragment, submitLoginToken } from '$lib/actions/auth';
@@ -31,6 +33,7 @@ import {
   forkSessionEntry,
   abortGeneration,
   openBranchPath,
+  parentCommandControlsAvailable,
   runPhoneQuickAction,
   selectActiveSession,
   sendRemoteSlashCommand,
@@ -51,6 +54,16 @@ import {
   transformPhoneMessages,
 } from '$lib/adapters/message-adapter';
 import {
+  activeSessionStatusBits,
+  groupActiveSessions,
+  groupSavedSessions,
+  mapTreeNodes,
+  savedSessionForkEntryId,
+  savedSessionSubtitle,
+  savedSessionTitle,
+  treeFileLabel,
+} from '$lib/adapters/sheet-adapter';
+import {
   buildEditPreviewLines,
   buildGrepPreview,
   buildToolPreview,
@@ -58,6 +71,7 @@ import {
   parseNumberedDiffLines,
   splitToolNotice,
 } from '$lib/adapters/tool-adapter';
+import { quotaContextDisplay, supportsPiQuotaForModel } from '$lib/adapters/quota-context';
 import { PhoneAuthError, PhoneClient, readStoredToken, storeToken } from '$lib/pi-phone-transport';
 import { createPiPhoneStateStore, piPhoneState } from '$lib/stores/pi-phone-state';
 import type {
@@ -66,6 +80,8 @@ import type {
   PhoneHealth,
   PhoneRawMessage,
   PhoneRpcResponse,
+  PhoneSavedSession,
+  PhoneTree,
   PhoneUiToolMessage,
 } from '$lib/types/pi-phone';
 
@@ -824,18 +840,60 @@ function testAutocompleteActions() {
   });
   assert.equal(activeAutocompleteContext('email@host', 10), null, 'mentions require a delimiter before @');
 
+  assert.deepEqual(
+    slashCommandItems('r', fixtureCommands).map((item) => [item.label, item.kind, item.badge]),
+    [
+      ['/reload', 'local-command-run', 'local'],
+      ['/refresh', 'local-command-run', 'local'],
+      ['/review', 'remote-command-insert', 'extension'],
+    ],
+    'slash autocomplete merges local commands and remote extension commands',
+  );
+
   const store = createPiPhoneStateStore();
+  const { client, local, rpc } = createMockClient();
   store.setCommands([{ name: 'plan', source: 'extension', description: 'Plan work' }]);
-  updateAutocomplete('/p', 2, { store, client: createMockClient().client, scheduleRemote: false });
+  updateAutocomplete('/p', 2, { store, client, scheduleRemote: false });
   assert.deepEqual(store.snapshot().autocomplete.items.map((item) => item.label), ['/plan']);
 
+  store.setCommands(fixtureCommands);
+  updateAutocomplete('/c', 2, { store, client, scheduleRemote: false });
+  assert.ok(store.snapshot().autocomplete.items.some((item) => item.label === '/cd' && item.kind === 'local-command-insert'));
+  assert.ok(store.snapshot().autocomplete.items.some((item) => item.label === '/compact' && item.kind === 'local-command-run'));
+
+  const localRun = applyAutocompleteItem(
+    { kind: 'local-command-run', label: '/refresh', name: 'refresh' },
+    { store, client, text: '/ref', cursor: 4 },
+  );
+  assert.equal(localRun.commandResult, 'handled');
+  assert.equal(localRun.text, '');
+  assert.deepEqual(local.at(-1), { kind: 'refreshAll', options: undefined }, 'run-style local command suggestions execute immediately');
+
+  const remoteInsert = applyAutocompleteItem(
+    { kind: 'remote-command-insert', label: '/review', name: 'review' },
+    { store, client, text: '/rev', cursor: 4 },
+  );
+  assert.equal(remoteInsert.text, '/review ');
+  assert.equal(rpc.length, 0, 'remote slash command suggestions insert text instead of executing');
+
   store.setAutocompleteContext({ type: 'path', mode: 'mention', query: 'src', replaceStart: 5, replaceEnd: 10 });
-  const applied = applyAutocompleteItem(
+  const appliedMention = applyAutocompleteItem(
     { kind: 'path', label: '@src/lib/', value: 'src/lib/', isDirectory: true },
     { store, text: 'open @src', cursor: 10 },
   );
-  assert.equal(applied.text, 'open @src/lib/');
-  assert.equal(applied.cursor, 'open @src/lib/'.length);
+  assert.equal(appliedMention.text, 'open @src/lib/');
+  assert.equal(appliedMention.cursor, 'open @src/lib/'.length);
+
+  const cdContext = { type: 'path' as const, mode: 'cd' as const, query: 'src/fi', replaceStart: 4, replaceEnd: 10 };
+  store.setAutocompleteContext(cdContext);
+  assert.equal(requestPathSuggestions(cdContext, { store, client }), true);
+  assert.deepEqual(local.at(-1), { type: 'path-suggestions', mode: 'cd', query: 'src/fi', requestId: 1 });
+  const appliedCd = applyAutocompleteItem(
+    { kind: 'path', label: 'src/fixtures.ts', value: 'src/fixtures.ts', isDirectory: false },
+    { store, text: '/cd src/fi', cursor: 10 },
+  );
+  assert.equal(appliedCd.text, '/cd src/fixtures.ts ');
+  assert.equal(appliedCd.cursor, '/cd src/fixtures.ts '.length);
 }
 
 function testCommandDispatchActions() {
@@ -881,6 +939,20 @@ function testCommandDispatchActions() {
   store.setModels([{ provider: 'openai-codex', id: 'gpt-5-codex', name: 'GPT 5 Codex' }]);
   assert.equal(tryHandleLocalCommand('/model openai-codex/gpt-5-codex', { store, client }), 'handled');
   assert.deepEqual(rpc.at(-1), { type: 'set_model', provider: 'openai-codex', modelId: 'gpt-5-codex' });
+  assert.equal(store.snapshot().quota.forceRefresh, true, 'model changes force quota refresh for supported model displays');
+
+  assert.equal(tryHandleLocalCommand('/model GPT 5 Codex', { store, client }), 'handled');
+  assert.deepEqual(rpc.at(-1), { type: 'set_model', provider: 'openai-codex', modelId: 'gpt-5-codex' }, 'model command can switch by display name');
+
+  assert.equal(tryHandleLocalCommand('/model missing-model', { store, client }), 'handled');
+  assert.equal(store.snapshot().sheets.mode, 'models', 'unknown model names fall back to opening the model picker');
+  assert.match(store.snapshot().feedback.toasts.at(-1)?.text || '', /Model not found locally/);
+
+  resetGlobalState();
+  handleRpcPayload({ type: 'response', command: 'set_model', success: true, data: { provider: 'openai-codex', id: 'gpt-5-codex', name: 'GPT 5 Codex' } });
+  assert.match(piPhoneState.snapshot().feedback.toasts.at(-1)?.text || '', /Model updated/);
+  handleRpcPayload({ type: 'response', command: 'set_thinking_level', success: true });
+  assert.match(piPhoneState.snapshot().feedback.toasts.at(-1)?.text || '', /Thinking level updated/);
 
   assert.equal(tryHandleLocalCommand('/cd /tmp', { store, client }), 'handled');
   assert.deepEqual(local.at(-1), { type: 'cd', args: '/tmp' });
@@ -952,7 +1024,40 @@ function testQuickActionAndSessionDispatchActions() {
       childPid: null,
       commandContextAvailable: true,
     },
+    {
+      id: 'parallel-1',
+      kind: 'parallel',
+      sessionId: 'session-2',
+      sessionFile: null,
+      sessionName: 'Parallel',
+      label: 'Parallel',
+      secondaryLabel: 'side quest',
+      firstUserPreview: 'Start side quest',
+      lastUserPreview: 'Continue side quest',
+      model: { provider: 'openai-codex', id: 'gpt-5-codex', name: 'GPT 5 Codex' },
+      isRunning: true,
+      isStreaming: true,
+      isCompacting: false,
+      messageCount: 3,
+      pendingMessageCount: 1,
+      hasPendingUiRequest: true,
+      lastError: '',
+      lastActivityAt: Date.now(),
+      childPid: 1234,
+      commandContextAvailable: true,
+    },
   ], 'parent-1');
+
+  const activeGroups = groupActiveSessions(store.snapshot());
+  assert.deepEqual(activeGroups.map((group) => [group.kind, group.sessions.map((item) => item.id)]), [
+    ['parent', ['parent-1']],
+    ['parallel', ['parallel-1']],
+  ]);
+  assert.deepEqual(
+    activeSessionStatusBits(store.snapshot().sessions.active[1], store.snapshot()).slice(0, 5),
+    ['parallel', 'live', 'needs input', 'GPT 5 Codex', '3 messages'],
+    'active session status bits preserve live, pending, model, and count labels',
+  );
 
   assert.equal(selectActiveSession('parallel-1', { store, client }), true);
   assert.deepEqual(session.at(-1), { kind: 'session-select', sessionId: 'parallel-1' });
@@ -963,6 +1068,14 @@ function testQuickActionAndSessionDispatchActions() {
   assert.equal(spawnParallelSession({ store, client }), true);
   assert.deepEqual(session.at(-1), { kind: 'session-spawn' });
 
+  store.setActiveSessions([{ ...store.snapshot().sessions.active[0], commandContextAvailable: false }], 'parent-1');
+  store.setStatus({ cwd: '/repo', hasToken: false, isRunning: true, host: '127.0.0.1', port: 3000, childRunning: true, isStreaming: false, isCompacting: false, lastError: '', childPid: null, sessionWorkerId: 'parent-1', sessionKind: 'parent', commandContextAvailable: false });
+  assert.equal(parentCommandControlsAvailable(store.snapshot()), false);
+  assert.equal(startNewParentSession({ store, client }), false, 'new parent is blocked when Pi reports command context unavailable');
+  assert.match(store.snapshot().feedback.toasts.at(-1)?.text || '', /fresh command context/);
+  assert.deepEqual(local.at(-1), { kind: 'refreshAll', options: undefined });
+  assert.equal(store.snapshot().connection.refreshRequested, true);
+
   assert.equal(switchSavedSession('/tmp/session.jsonl', { store, client }), true);
   assert.deepEqual(rpc.at(-1), { type: 'switch_session', sessionPath: '/tmp/session.jsonl' });
 
@@ -971,6 +1084,93 @@ function testQuickActionAndSessionDispatchActions() {
 
   assert.equal(openBranchPath('entry-2', { store, client }), true);
   assert.deepEqual(rpc.at(-1), { type: 'phone_open_branch_path', entryId: 'entry-2' });
+}
+
+function testSavedSessionAndTreeAdapters() {
+  const sessions: Array<PhoneSavedSession & { forkEntryId?: string }> = [
+    {
+      path: '/repo/.pi/sessions/parent-a.jsonl',
+      id: 'parent-a',
+      cwd: '/repo',
+      name: 'Parent A',
+      created: '2026-01-01T10:00:00Z',
+      modified: '2026-01-01T11:00:00Z',
+      messageCount: 4,
+      firstMessage: 'Build feature A',
+      forkEntryId: 'entry-parent-a',
+    },
+    {
+      path: '/repo/.pi/sessions/parallel-a.jsonl',
+      id: 'parallel-a',
+      cwd: '/repo',
+      parentSessionPath: '/repo/.pi/sessions/parent-a.jsonl',
+      created: '2026-01-01T10:30:00Z',
+      modified: '2026-01-01T10:45:00Z',
+      messageCount: 2,
+      firstMessage: 'Parallel follow-up',
+    },
+    {
+      path: '/repo/.pi/sessions/parent-b.jsonl',
+      id: 'parent-b',
+      cwd: '/repo',
+      created: '2026-01-02T10:00:00Z',
+      modified: '2026-01-02T11:00:00Z',
+      messageCount: 1,
+      firstMessage: 'Newest parent',
+    },
+  ];
+
+  const groups = groupSavedSessions(sessions);
+  assert.deepEqual(groups.map((group) => [group.title, group.sessions.map((session) => session.id)]), [
+    ['Parent sessions', ['parent-b', 'parent-a']],
+    ['Parallel from Parent A', ['parallel-a']],
+  ]);
+  assert.equal(savedSessionTitle(sessions[0]), 'Parent A');
+  assert.match(savedSessionSubtitle(sessions[0]), /4 messages · \/repo/);
+  assert.equal(savedSessionForkEntryId(sessions[0]), 'entry-parent-a');
+  assert.equal(savedSessionForkEntryId(sessions[1]), null, 'fork buttons stay hidden when no entry id is exposed');
+
+  const tree: PhoneTree = {
+    sessionFile: '/repo/.pi/sessions/parent-a.jsonl',
+    currentLeafId: 'entry-3',
+    currentPathIds: ['entry-1', 'entry-3'],
+    nodes: [
+      {
+        id: 'entry-1',
+        type: 'message',
+        depth: 0,
+        timestamp: '2026-01-01T10:00:00Z',
+        childCount: 2,
+        summary: { kind: 'message', role: 'user', preview: 'Start here' },
+      },
+      {
+        id: 'entry-2',
+        parentId: 'entry-1',
+        type: 'model_change',
+        depth: 1,
+        timestamp: '2026-01-01T10:05:00Z',
+        childCount: 0,
+        summary: { kind: 'model', preview: 'gpt-5-codex' },
+      },
+      {
+        id: 'entry-3',
+        parentId: 'entry-1',
+        type: 'message',
+        depth: 1,
+        timestamp: '2026-01-01T10:10:00Z',
+        childCount: 0,
+        summary: { kind: 'message', role: 'assistant', preview: 'Current answer' },
+      },
+    ],
+  };
+
+  assert.equal(treeFileLabel(tree), 'parent-a.jsonl');
+  const nodes = mapTreeNodes(tree);
+  assert.equal(nodes[0]?.isBranchPoint, true);
+  assert.equal(nodes[0]?.isOnActivePath, true);
+  assert.equal(nodes[1]?.modelLabel, 'gpt-5-codex');
+  assert.equal(nodes[2]?.isCurrent, true);
+  assert.equal(nodes[2]?.preview, 'Current answer');
 }
 
 async function testPromptSubmissionRules() {
@@ -1054,15 +1254,22 @@ function testExtensionUiRequestActions() {
   });
   assert.equal(piPhoneState.snapshot().uiRequests.pending, null, 'UI requests owned by another active session are ignored');
 
+  handleRpcPayload({ type: 'extension_ui_request', method: 'notify', message: 'Extension warning', level: 'warning' });
   handleRpcPayload({ type: 'extension_ui_request', method: 'setStatus', statusText: 'Extension busy' });
   handleRpcPayload({ type: 'extension_ui_request', method: 'setWidget', widgetKey: 'review', widgetLines: ['line one'] });
   handleRpcPayload({ type: 'extension_ui_request', method: 'setTitle', title: 'Custom Pi Title' });
   handleRpcPayload({ type: 'extension_ui_request', method: 'set_editor_text', text: '/plan next' });
+  handleRpcPayload({ type: 'extension_ui_request', method: 'select', id: 'select-global', sessionWorkerId: 'worker-a', title: 'Pick one', options: ['A', 'B'] });
   const globalUiState = piPhoneState.snapshot();
+  assert.equal(globalUiState.feedback.toasts.at(-1)?.kind, 'warning');
+  assert.equal(globalUiState.feedback.toasts.at(-1)?.text, 'Extension warning');
   assert.equal(globalUiState.uiRequests.footerStatus, 'Extension busy');
   assert.deepEqual(globalUiState.uiRequests.widgets.get('review'), ['line one']);
   assert.equal(globalUiState.uiRequests.title, 'Custom Pi Title');
   assert.equal(globalUiState.composer.text, '/plan next');
+  assert.equal(globalUiState.uiRequests.pending?.method, 'select');
+  handleRpcPayload({ type: 'extension_ui_request', method: 'setWidget', widgetKey: 'review', widgetLines: [] });
+  assert.equal(piPhoneState.snapshot().uiRequests.widgets.has('review'), false, 'empty widget payload clears the status widget');
 
   store.setActiveSessionId('worker-a');
   store.setPendingUiRequest({
@@ -1091,6 +1298,27 @@ function testExtensionUiRequestActions() {
 
   assert.equal(sendExtensionUiResponse({ id: 'input-1', value: 'stale' }, { store, client }), false);
   assert.match(store.snapshot().feedback.toasts.at(-1)?.text || '', /no longer pending/i, 'stale responses show an error toast');
+
+  store.setPendingUiRequest({ type: 'extension_ui_request', method: 'select', id: 'select-1', sessionWorkerId: 'worker-a', options: ['alpha', 'beta'] });
+  assert.equal(sendExtensionUiResponse({ id: 'select-1', value: 'beta' }, { store, client }), true);
+  assert.deepEqual(sent.at(-1), {
+    type: 'extension_ui_response',
+    sessionWorkerId: 'worker-a',
+    id: 'select-1',
+    value: 'beta',
+  });
+
+  store.setPendingUiRequest({ type: 'extension_ui_request', method: 'editor', id: 'editor-1', sessionWorkerId: 'worker-a', title: 'Edit', prefill: 'draft start' });
+  pending = store.snapshot().uiRequests.pending;
+  assert.equal(extensionUiDraftValue(store.snapshot(), pending), 'draft start', 'editor requests use prefill as their initial draft');
+  persistExtensionUiDraft(pending, 'edited body', { store });
+  assert.equal(sendExtensionUiResponse({ id: 'editor-1', value: 'edited body' }, { store, client }), true);
+  assert.deepEqual(sent.at(-1), {
+    type: 'extension_ui_response',
+    sessionWorkerId: 'worker-a',
+    id: 'editor-1',
+    value: 'edited body',
+  });
 
   store.setPendingUiRequest({ type: 'extension_ui_request', method: 'confirm', id: 'confirm-1', sessionWorkerId: 'worker-a' });
   store.setActiveSessionId('worker-b');
@@ -1185,6 +1413,95 @@ async function testLoginTokenSubmissionAction() {
   assert.equal(empty.ok, false);
   assert.equal(emptyStore.snapshot().auth.loginOpen, true);
   assert.equal(emptyStore.snapshot().auth.authError, 'Enter the current /phone-start token.');
+}
+
+async function testQuotaContextVisibilityAndTransportFetch() {
+  assert.equal(supportsPiQuotaForModel({ provider: 'openai-codex', id: 'gpt-5-codex' }), true);
+  assert.equal(supportsPiQuotaForModel({ provider: 'openai-codex', modelId: 'gpt-4.1' }), true);
+  assert.equal(supportsPiQuotaForModel({ provider: 'openai-codex', id: 'o3' }), false);
+  assert.equal(supportsPiQuotaForModel({ provider: 'anthropic', id: 'gpt-fake' }), false);
+
+  const supportedDisplay = quotaContextDisplay({
+    cwd: '/repo',
+    snapshot: {
+      model: { provider: 'openai-codex', id: 'gpt-5-codex', name: 'GPT-5 Codex', contextWindow: 200_000 },
+      isStreaming: false,
+      isCompacting: false,
+      sessionFile: null,
+      sessionId: null,
+      messageCount: 4,
+      pendingMessageCount: 0,
+      contextUsage: { tokens: 64_000, contextWindow: 200_000, percent: 32 },
+    },
+    quota: {
+      visible: true,
+      limited: false,
+      primaryWindow: { label: '5h', text: '90%', resetAfterSeconds: null, usedPercent: 10, leftPercent: 90 },
+      secondaryWindow: { label: '7d', text: '60%', resetAfterSeconds: null, usedPercent: 40, leftPercent: 60 },
+    },
+  });
+  assert.equal(supportedDisplay.visible, true, 'composer meta is visible when cwd/context/quota is available');
+  assert.equal(supportedDisplay.quotaSupported, true, 'supported openai-codex gpt models opt into quota display');
+  assert.equal(supportedDisplay.contextUsage?.text, '32.0%/200k');
+  assert.equal(supportedDisplay.primary?.label, '5h');
+  assert.equal(supportedDisplay.secondary?.label, '7d');
+
+  const unsupportedDisplay = quotaContextDisplay({
+    cwd: '',
+    snapshot: {
+      model: { provider: 'anthropic', id: 'claude-sonnet-4.5', name: 'Claude Sonnet' },
+      isStreaming: false,
+      isCompacting: false,
+      sessionFile: null,
+      sessionId: null,
+      messageCount: 4,
+      pendingMessageCount: 0,
+    },
+    quota: {
+      visible: true,
+      limited: false,
+      primaryWindow: { label: '5h', text: '90%', resetAfterSeconds: null, usedPercent: 10, leftPercent: 90 },
+      secondaryWindow: null,
+    },
+  });
+  assert.equal(unsupportedDisplay.quotaSupported, false, 'unsupported providers do not expose Pi quota windows');
+  assert.equal(unsupportedDisplay.primary, null, 'stale quota is hidden for unsupported models');
+  assert.equal(unsupportedDisplay.visible, false, 'meta hides completely when unsupported model has no cwd/context to show');
+
+  const globals = globalThis as unknown as Record<string, unknown>;
+  const previousWindow = globals.window;
+  const previousFetch = globalThis.fetch;
+  const requests: string[] = [];
+  globals.window = { location: { origin: 'http://phone.test', protocol: 'http:', host: 'phone.test' } };
+  globalThis.fetch = (async (input: RequestInfo | URL) => {
+    requests.push(String(input));
+    return Response.json({
+      visible: true,
+      limited: false,
+      primaryWindow: { label: '5h', text: '75%', resetAfterSeconds: null, usedPercent: 25, leftPercent: 75 },
+      secondaryWindow: null,
+    });
+  }) as typeof fetch;
+
+  try {
+    const client = new PhoneClient({ token: 'quota-token' });
+    const firstQuota = await client.refreshQuota({ model: { provider: 'openai-codex', id: 'gpt-5-codex' }, force: true });
+    assert.equal(firstQuota?.primaryWindow?.text, '75%');
+    assert.equal(requests.length, 1, 'supported GPT model fetches quota');
+    assert.match(requests[0], /\/api\/quota\?token=quota-token/);
+    assert.match(requests[0], /provider=openai-codex/);
+    assert.match(requests[0], /modelId=gpt-5-codex/);
+    assert.match(requests[0], /force=1/);
+
+    const unsupportedQuota = await client.refreshQuota({ model: { provider: 'openai-codex', id: 'o3' } });
+    assert.equal(unsupportedQuota, null, 'unsupported models clear quota state');
+    assert.equal(client.snapshot().quota, null, 'client quota is hidden after switching to an unsupported model');
+    assert.equal(requests.length, 1, 'unsupported models do not call /api/quota');
+  } finally {
+    if (previousWindow === undefined) delete globals.window;
+    else globals.window = previousWindow;
+    globalThis.fetch = previousFetch;
+  }
 }
 
 async function testPhoneClientTransportLifecycleFixtures() {
@@ -1284,12 +1601,14 @@ export async function run() {
   testAutocompleteActions();
   testCommandDispatchActions();
   testQuickActionAndSessionDispatchActions();
+  testSavedSessionAndTreeAdapters();
   await testPromptSubmissionRules();
   await testAttachmentOrderingRemovalAndPayload();
   testAttachmentStoreOrderingAndCleanupHooks();
   testExtensionUiRequestActions();
   testLoginTokenUrlConsumption();
   await testLoginTokenSubmissionAction();
+  await testQuotaContextVisibilityAndTransportFetch();
   await testPhoneClientTransportLifecycleFixtures();
   testServerLifecycleEnvelopeNotices();
 }

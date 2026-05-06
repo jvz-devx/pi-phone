@@ -1,6 +1,7 @@
 <script lang="ts">
+  import { quotaContextDisplay, type PhoneDisplayContextUsage } from '$lib/adapters/quota-context';
   import { piPhoneState, type PhoneStateStore } from '$lib/stores/pi-phone-state';
-  import type { PhoneContextUsage, PhoneModel, PhoneQuotaWindow, PhoneSnapshotState } from '$lib/types/pi-phone';
+  import type { PhoneQuotaWindow } from '$lib/types/pi-phone';
   import { cn } from '$lib/utils';
 
   interface Props {
@@ -14,11 +15,11 @@
   let appState = $derived($stateStore);
   let cwd = $derived(appState.status?.cwd || appState.auth.health?.cwd || '');
   let cwdDisplay = $derived(formatCwdDisplay(cwd));
-  let contextUsage = $derived(currentContextUsage(appState.snapshot.state));
-  let quotaSupported = $derived(shouldShowQuotaForModel(appState.snapshot.state?.model));
-  let primary = $derived(quotaSupported ? appState.quota.value?.primaryWindow || null : null);
-  let secondary = $derived(quotaSupported ? appState.quota.value?.secondaryWindow || null : null);
-  let visible = $derived(Boolean(cwd || contextUsage || primary || secondary));
+  let display = $derived(quotaContextDisplay({ cwd, snapshot: appState.snapshot.state, quota: appState.quota.value }));
+  let contextUsage = $derived(display.contextUsage);
+  let primary = $derived(display.primary);
+  let secondary = $derived(display.secondary);
+  let visible = $derived(display.visible);
 
   function formatCwdDisplay(path = '') {
     const value = String(path || '').trim();
@@ -39,34 +40,6 @@
     return `/…/${parts[parts.length - 1]}`;
   }
 
-  function formatTokenCount(count: number) {
-    if (!Number.isFinite(count) || count <= 0) return '';
-    if (count < 1000) return String(Math.round(count));
-    if (count < 10000) return `${(count / 1000).toFixed(1)}k`;
-    if (count < 1000000) return `${Math.round(count / 1000)}k`;
-    if (count < 10000000) return `${(count / 1000000).toFixed(1)}M`;
-    return `${Math.round(count / 1000000)}M`;
-  }
-
-  function currentContextUsage(snapshot: PhoneSnapshotState | null): (PhoneContextUsage & { text: string }) | null {
-    if (!snapshot || typeof snapshot !== 'object') return null;
-    const contextWindow = Number(snapshot.contextUsage?.contextWindow ?? snapshot.model?.contextWindow);
-    if (!Number.isFinite(contextWindow) || contextWindow <= 0) return null;
-    const percent = typeof snapshot.contextUsage?.percent === 'number' ? snapshot.contextUsage.percent : null;
-    const percentDisplay = percent === null ? '?' : `${percent.toFixed(1)}%`;
-    return {
-      tokens: snapshot.contextUsage?.tokens ?? null,
-      contextWindow,
-      percent,
-      text: `${percentDisplay}/${formatTokenCount(contextWindow)}`,
-    };
-  }
-
-  function shouldShowQuotaForModel(model: PhoneModel | null | undefined) {
-    if (!model) return false;
-    return model.provider === 'openai-codex' && /^gpt-/i.test(model.id || '');
-  }
-
   function quotaTone(window: PhoneQuotaWindow | null) {
     const leftPercent = window?.leftPercent;
     if (!Number.isFinite(leftPercent)) return 'border-border/60 bg-secondary/45 text-muted-foreground';
@@ -75,7 +48,7 @@
     return 'border-emerald-400/30 bg-emerald-500/10 text-emerald-200';
   }
 
-  function contextTone(context: (PhoneContextUsage & { text: string }) | null) {
+  function contextTone(context: PhoneDisplayContextUsage | null) {
     const percent = context?.percent;
     if (!Number.isFinite(percent)) return 'border-border/60 bg-secondary/45 text-muted-foreground';
     if ((percent || 0) > 90) return 'border-destructive/40 bg-destructive/10 text-destructive';

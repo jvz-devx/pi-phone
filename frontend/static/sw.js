@@ -1,31 +1,6 @@
-const CACHE = "pi-phone-v19";
-const ASSETS = [
-  "/",
-  "/styles.css",
-  "/app.js",
-  "/app/attachments.js",
-  "/app/autocomplete-controller.js",
-  "/app/autocomplete.js",
-  "/app/bindings.js",
-  "/app/command-catalog.js",
-  "/app/commands.js",
-  "/app/constants.js",
-  "/app/formatters.js",
-  "/app/handlers.js",
-  "/app/main.js",
-  "/app/markdown.js",
-  "/app/messages.js",
-  "/app/sheet-actions.js",
-  "/app/sheet-navigation.js",
-  "/app/sheets-view.js",
-  "/app/state.js",
-  "/app/tool-rendering.js",
-  "/app/transport.js",
-  "/app/ui.js",
-  "/manifest.webmanifest",
-  "/icon.svg",
-];
-const APP_SHELL = new Set(ASSETS);
+const CACHE = "pi-phone-svelte-v1";
+const CORE_ASSETS = ["/", "/manifest.webmanifest", "/icon.svg"];
+const APP_SHELL = new Set(CORE_ASSETS);
 
 function requestUrlHasToken(urlString) {
   try {
@@ -47,7 +22,7 @@ async function deleteTokenizedCacheEntries() {
 }
 
 self.addEventListener("install", (event) => {
-  event.waitUntil(caches.open(CACHE).then((cache) => cache.addAll(ASSETS)));
+  event.waitUntil(caches.open(CACHE).then((cache) => cache.addAll(CORE_ASSETS)));
   self.skipWaiting();
 });
 
@@ -65,7 +40,7 @@ async function updateCache(request) {
   if (requestUrlHasToken(request.url)) return fetch(request, { cache: "no-store" });
 
   const response = await fetch(request);
-  if (response.ok) {
+  if (response.ok && request.method === "GET") {
     const copy = response.clone();
     caches.open(CACHE).then((cache) => cache.put(request, copy));
   }
@@ -93,6 +68,7 @@ self.addEventListener("fetch", (event) => {
     return;
   }
 
+  const isSvelteAsset = url.pathname.startsWith("/_app/");
   const useNetworkFirst = request.mode === "navigate" || APP_SHELL.has(url.pathname);
 
   if (useNetworkFirst) {
@@ -106,10 +82,12 @@ self.addEventListener("fetch", (event) => {
     return;
   }
 
-  event.respondWith(
-    caches.match(request).then((cached) => {
-      if (cached) return cached;
-      return updateCache(request);
-    }),
-  );
+  if (isSvelteAsset) {
+    event.respondWith(
+      caches.match(request).then((cached) => {
+        if (cached) return cached;
+        return updateCache(request);
+      }),
+    );
+  }
 });

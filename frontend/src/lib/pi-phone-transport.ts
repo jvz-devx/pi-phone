@@ -1,3 +1,4 @@
+import { normalizeQuotaModel, supportsPiQuotaForModel } from '$lib/adapters/quota-context';
 import type {
   PhoneClientMessage,
   PhoneClientRpcCommand,
@@ -188,24 +189,6 @@ function healthError(response: Response) {
 
 function isTokenRejectedHealth(health: PhoneHealth | null | undefined) {
   return Boolean(health?.hasToken && !health?.cwd);
-}
-
-function normalizeModel(model: PhoneModelRef | null | undefined) {
-  if (!model || typeof model !== 'object') return null;
-  const provider = typeof model.provider === 'string' ? model.provider : '';
-  const modelId =
-    typeof model.id === 'string'
-      ? model.id
-      : typeof model.modelId === 'string'
-        ? model.modelId
-        : '';
-  if (!provider && !modelId) return null;
-  return { provider, modelId };
-}
-
-function shouldFetchQuotaForModel(model: PhoneModelRef | null | undefined) {
-  const current = normalizeModel(model);
-  return Boolean(current && current.provider === 'openai-codex' && /^gpt-/i.test(current.modelId || ''));
 }
 
 function cloneState(state: PhoneClientState): PhoneClientState {
@@ -521,7 +504,7 @@ export class PhoneClient {
     const model = options.model === undefined ? this.state.currentModel : options.model;
     if (options.model !== undefined) this.setCurrentModel(options.model);
 
-    if (!shouldFetchQuotaForModel(model)) {
+    if (!supportsPiQuotaForModel(model)) {
       this.quotaRequestId += 1;
       this.state.quota = null;
       this.emit('quota', null);
@@ -529,7 +512,7 @@ export class PhoneClient {
       return null;
     }
 
-    const currentModel = normalizeModel(model);
+    const currentModel = normalizeQuotaModel(model);
     if (!currentModel) return null;
 
     const requestId = ++this.quotaRequestId;
