@@ -8,3 +8,4 @@ pnpm-debug.log*
 frontend/.svelte-kit/
 frontend/build/
 frontend/package/
+.pi-phone-public-backups/

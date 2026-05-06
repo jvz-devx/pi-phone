@@ -77,7 +77,28 @@ nix develop path:$PWD -c npm install --include=dev
 nix develop path:$PWD -c npm test
 ```
 
-`npm test` currently runs the TypeScript type check.
+`npm test` currently runs the TypeScript type check, static fallback guard, and SvelteKit fixture adapter tests.
+
+### SvelteKit frontend workflow
+
+The `svelte` branch contains the in-progress SvelteKit replacement in `frontend/`. The production server still serves the legacy static app from `public/`; keep `public/` untouched until manual parity testing approves a cutover.
+
+Useful root commands:
+
+```bash
+npm run frontend:install
+npm run frontend:dev
+npm run frontend:check
+npm run frontend:build
+npm run frontend:sync-public:dry-run
+npm run frontend:sync-public
+```
+
+`npm run frontend:build` writes only to `frontend/build/` and is safe for normal development. `npm run frontend:sync-public:dry-run` builds the SvelteKit app and validates release preconditions without changing `public/`. `npm run frontend:sync-public` is the explicit release cutover command: it refuses to run if `public/` is already dirty, builds `frontend/`, backs up the current `public/` under `.pi-phone-public-backups/`, and then copies `frontend/build/` into `public/`. Do not run or commit the sync until the SvelteKit UI has passed manual parity checks.
+
+The SvelteKit app uses Svelte AI Elements and shadcn-svelte from `frontend/src/lib/components/ai-elements/` and `frontend/src/lib/components/ui/` as UI components only. It does not add Vercel AI SDK/OpenRouter routes; Pi Phone continues to use its internal tooling transport: `GET /api/health`, `GET /api/quota`, and `WS /ws?token=...` envelopes from `PhoneServerRuntime`.
+
+See `docs/sveltekit-migration.md` for the migration status, component mapping, and release-copy checklist.
 
 ## Setup guide
 
@@ -399,8 +420,10 @@ pi config
 - `phone-session-pool.ts` — tiny compatibility export for the session pool API
 - `src/extension/` — backend modules for extension registration, server runtime, args, paths, quota, runtime control, sessions, static assets, tailscale, theme mapping, and the child inline-image adapter
 - `src/session-pool/` — parent-session mirroring plus parallel session worker and session pool internals
-- `public/` — mobile web app assets
-- `public/app/` — focused frontend modules for state, UI, rendering, transport, commands, autocomplete, sheets, bindings, and attachments
+- `public/` — current production mobile web app assets; intentionally retained during the SvelteKit migration
+- `public/app/` — legacy static frontend modules for state, UI, rendering, transport, commands, autocomplete, sheets, bindings, and attachments
+- `frontend/` — in-progress SvelteKit frontend source and static build output directory (`frontend/build/`)
+- `scripts/release-sveltekit-public.mjs` — explicit, guarded release-copy script for replacing `public/` after parity approval
 
 ## Package name
 

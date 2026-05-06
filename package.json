@@ -37,13 +37,16 @@
   },
   "scripts": {
     "typecheck": "tsc --noEmit",
-    "test": "npm run typecheck && npm run frontend:test:fixtures",
+    "static:fallback:check": "node scripts/check-phone-static-fallback.mjs",
+    "test": "npm run typecheck && npm run static:fallback:check && npm run frontend:test:fixtures",
     "frontend:install": "npm install --prefix frontend",
     "frontend:test:fixtures": "npm run test:fixtures --prefix frontend",
     "frontend:dev": "npm run dev --prefix frontend",
     "frontend:check": "npm run check --prefix frontend",
     "frontend:build": "npm run build --prefix frontend",
     "frontend:preview": "npm run preview --prefix frontend",
+    "frontend:sync-public:dry-run": "node scripts/release-sveltekit-public.mjs --dry-run",
+    "frontend:sync-public": "node scripts/release-sveltekit-public.mjs --confirm",
     "frontend:shadcn:add": "npm run shadcn:add --prefix frontend --"
   },
   "dependencies": {

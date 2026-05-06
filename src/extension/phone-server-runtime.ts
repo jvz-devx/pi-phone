@@ -876,6 +876,15 @@ export class PhoneServerRuntime {
       return;
     }
 
+    if (url.pathname.startsWith("/api/")) {
+      res.writeHead(404, {
+        "Content-Type": "application/json; charset=utf-8",
+        "Cache-Control": "no-store",
+      });
+      res.end(JSON.stringify({ error: "Not found" }));
+      return;
+    }
+
     if (req.method !== "GET" && req.method !== "HEAD") {
       res.writeHead(405, { "Content-Type": "application/json; charset=utf-8" });
       res.end(JSON.stringify({ error: "Method not allowed" }));
