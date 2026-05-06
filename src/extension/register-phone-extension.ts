@@ -3,10 +3,17 @@ import { createServer, isIP } from "node:net";
 import { networkInterfaces } from "node:os";
 import { PhoneServerRuntime, type PhoneLaunchInfo } from "./phone-server-runtime";
 import { getTailscaleServeInfo } from "./phone-tailscale";
+import {
+  formatPhoneVersionStatus,
+  getPhoneUpdateStatus,
+  handlePhoneUpdate,
+  maybeNotifyPhoneUpdateAvailable,
+} from "./phone-update";
 
 type PiPhoneGlobalState = {
   runtime?: PhoneServerRuntime;
   registeredApis?: WeakSet<ExtensionAPI>;
+  updateCheckNotified?: boolean;
 };
 
 function getGlobalState() {
@@ -322,12 +329,31 @@ export default function registerPhoneExtension(pi: ExtensionAPI) {
     },
   });
 
+  pi.registerCommand("phone-version", {
+    description: "Show Pi Phone package version, install path, git revision, and update status",
+    handler: async (_args, ctx) => {
+      const status = await getPhoneUpdateStatus(ctx, { fetch: true });
+      ctx.ui.notify(formatPhoneVersionStatus(status), "info");
+    },
+  });
+
+  pi.registerCommand("phone-update", {
+    description: "Safely update a git-installed Pi Phone package, then prompt you to /reload",
+    handler: async (_args, ctx) => {
+      await handlePhoneUpdate(ctx);
+    },
+  });
+
   pi.on("input", async (event, ctx) => {
     return runtime.handleInput(event, ctx);
   });
 
   pi.on("session_start", async (event, ctx) => {
     await runtime.handleSessionStart(event as any, ctx);
+    if (!state.updateCheckNotified) {
+      state.updateCheckNotified = true;
+      await maybeNotifyPhoneUpdateAvailable(ctx);
+    }
   });
 
   onCompat(pi, "session_switch", async (_event, ctx) => {

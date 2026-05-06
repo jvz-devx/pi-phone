@@ -30,13 +30,19 @@ A phone-first remote UI for [Pi](https://pi.dev) that lets you drive a real Pi s
 
 ## Install
 
-Install the published npm package with Pi:
+Install the rolling git package with Pi:
 
 ```bash
-pi install npm:@malinamnam/pi-phone
+pi install git:https://github.com/jvz-devx/pi-phone
 ```
 
-This is the recommended install path. It uses the packaged extension artifacts and avoids git-install dependency skew from development-only dependencies or nested Pi core packages.
+This is the recommended install path while Pi Phone is moving quickly. Leave the git source **unpinned** so Pi can update it later with:
+
+```bash
+pi update --extensions
+```
+
+Pi treats git refs such as `@master`, `@main`, or `@v1.2.3` as pinned package versions, and pinned refs are skipped by `pi update` / `pi update --extensions`. If you intentionally want to freeze Pi Phone on a commit or branch ref, use a pinned source; otherwise prefer the unpinned source above.
 
 Then either restart Pi or run:
 
@@ -51,15 +57,18 @@ pi list
 pi config
 ```
 
-## Development
+You can also check and update from inside Pi:
 
-For local development or bleeding-edge testing, you can install from git:
-
-```bash
-pi install git:github.com/jvz-devx/pi-phone@master
+```text
+/phone-version
+/phone-update
 ```
 
-Git installs use this repository's `.npmrc` to omit development dependencies by default, which avoids nested Pi core packages that can differ from the Pi runtime you are using. Prefer the npm package above for normal use.
+## Development
+
+For local development, install this working tree as a local package or use `pi -e` while testing. For bleeding-edge testing on another machine, use the same unpinned git install shown above.
+
+Git installs use this repository's `.npmrc` to omit development dependencies by default, which avoids nested Pi core packages that can differ from the Pi runtime you are using.
 
 On Nix/NixOS, enter the pinned development shell and install development dependencies explicitly before running verification:
 
@@ -213,6 +222,36 @@ Shows whether the phone server is running, whether the parent session is current
 ```
 
 Shows the current token, or tells you that token auth is disabled for the current phone server.
+
+### `/phone-version`
+
+```text
+/phone-version
+```
+
+Shows the Pi Phone package version, detected install path/source, local git HEAD, remote HEAD, and whether an update is available. For git installs, it fetches remote refs before reporting status.
+
+If the detected settings source is pinned, `/phone-version` reminds you that pinned refs such as `@master`, `@main`, and `@v1.2.3` are skipped by `pi update --extensions`.
+
+### `/phone-update`
+
+```text
+/phone-update
+```
+
+Safely updates a git-installed Pi Phone package from inside Pi:
+
+- verifies Pi Phone is running from a git checkout
+- fetches `origin`
+- compares local and remote HEADs
+- refuses to proceed if the checkout has uncommitted changes
+- asks for confirmation before changing code
+- fast-forwards when possible
+- only offers a hard reset for Pi-managed git clones when fast-forward is not possible
+- runs `npm install`
+- tells you to run `/reload` or restart Pi after a successful update
+
+Pi Phone does not silently auto-update by default. Set `PI_PHONE_CHECK_UPDATES=1` to make it check once on startup and notify when `/phone-update` is available.
 
 ## Typical usage flow
 
