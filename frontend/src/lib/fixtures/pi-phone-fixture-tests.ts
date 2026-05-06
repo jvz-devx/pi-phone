@@ -8,6 +8,13 @@ import {
   detectSlashCommandAutocompleteContext,
   updateAutocomplete,
 } from '$lib/actions/autocomplete';
+import { consumeLoginTokenFromUrl, consumeTokenFromFragment, submitLoginToken } from '$lib/actions/auth';
+import {
+  cancelExtensionUiRequest,
+  extensionUiDraftValue,
+  persistExtensionUiDraft,
+  sendExtensionUiResponse,
+} from '$lib/actions/extension-ui';
 import {
   attachmentOccurrences,
   buildPromptPayload,
@@ -50,8 +57,16 @@ import {
   parseNumberedDiffLines,
   splitToolNotice,
 } from '$lib/adapters/tool-adapter';
+import { PhoneAuthError } from '$lib/pi-phone-transport';
 import { createPiPhoneStateStore, piPhoneState } from '$lib/stores/pi-phone-state';
-import type { PhoneAttachmentRecord, PhoneRawMessage, PhoneRpcResponse, PhoneUiToolMessage } from '$lib/types/pi-phone';
+import type {
+  PhoneAttachmentRecord,
+  PhoneExtensionUiResponse,
+  PhoneHealth,
+  PhoneRawMessage,
+  PhoneRpcResponse,
+  PhoneUiToolMessage,
+} from '$lib/types/pi-phone';
 
 import {
   fixtureCommands,
@@ -842,6 +857,160 @@ function testAttachmentStoreOrderingAndCleanupHooks() {
   assert.deepEqual(store.clearAttachments().map((item) => item.id), ['second']);
 }
 
+function testExtensionUiRequestActions() {
+  const store = createPiPhoneStateStore();
+  const sent: PhoneExtensionUiResponse[] = [];
+  const client = {
+    sendRpc(command: PhoneExtensionUiResponse) {
+      sent.push(command);
+      return true;
+    },
+  };
+
+  resetGlobalState();
+  piPhoneState.setActiveSessionId('worker-a');
+  handleRpcPayload({
+    type: 'extension_ui_request',
+    method: 'input',
+    id: 'ignored',
+    sessionWorkerId: 'worker-b',
+    title: 'Other session',
+  });
+  assert.equal(piPhoneState.snapshot().uiRequests.pending, null, 'UI requests owned by another active session are ignored');
+
+  handleRpcPayload({ type: 'extension_ui_request', method: 'setStatus', statusText: 'Extension busy' });
+  handleRpcPayload({ type: 'extension_ui_request', method: 'setWidget', widgetKey: 'review', widgetLines: ['line one'] });
+  handleRpcPayload({ type: 'extension_ui_request', method: 'setTitle', title: 'Custom Pi Title' });
+  handleRpcPayload({ type: 'extension_ui_request', method: 'set_editor_text', text: '/plan next' });
+  const globalUiState = piPhoneState.snapshot();
+  assert.equal(globalUiState.uiRequests.footerStatus, 'Extension busy');
+  assert.deepEqual(globalUiState.uiRequests.widgets.get('review'), ['line one']);
+  assert.equal(globalUiState.uiRequests.title, 'Custom Pi Title');
+  assert.equal(globalUiState.composer.text, '/plan next');
+
+  store.setActiveSessionId('worker-a');
+  store.setPendingUiRequest({
+    type: 'extension_ui_request',
+    method: 'input',
+    id: 'input-1',
+    sessionWorkerId: 'worker-a',
+    title: 'Name',
+    prefill: 'prefill value',
+  });
+  let pending = store.snapshot().uiRequests.pending;
+  assert.equal(extensionUiDraftValue(store.snapshot(), pending), 'prefill value', 'input requests use prefill when no draft exists');
+
+  persistExtensionUiDraft(pending, 'draft value', { store });
+  assert.equal(extensionUiDraftValue(store.snapshot(), pending), 'draft value', 'input/editor drafts are persisted by session request key');
+
+  assert.equal(sendExtensionUiResponse({ id: 'input-1', value: 'draft value' }, { store, client }), true);
+  assert.deepEqual(sent.at(-1), {
+    type: 'extension_ui_response',
+    sessionWorkerId: 'worker-a',
+    id: 'input-1',
+    value: 'draft value',
+  });
+  assert.equal(store.snapshot().uiRequests.pending, null, 'successful UI responses clear the pending request');
+  assert.equal(extensionUiDraftValue(store.snapshot(), pending), 'prefill value', 'successful submit forgets the saved draft');
+
+  assert.equal(sendExtensionUiResponse({ id: 'input-1', value: 'stale' }, { store, client }), false);
+  assert.match(store.snapshot().feedback.toasts.at(-1)?.text || '', /no longer pending/i, 'stale responses show an error toast');
+
+  store.setPendingUiRequest({ type: 'extension_ui_request', method: 'confirm', id: 'confirm-1', sessionWorkerId: 'worker-a' });
+  store.setActiveSessionId('worker-b');
+  assert.equal(sendExtensionUiResponse({ id: 'confirm-1', confirmed: true }, { store, client }), false);
+  assert.match(store.snapshot().feedback.toasts.at(-1)?.text || '', /another session/i, 'ownership is rechecked before response send');
+
+  store.setActiveSessionId('worker-a');
+  const confirmRequest = { type: 'extension_ui_request' as const, method: 'confirm' as const, id: 'confirm-2', sessionWorkerId: 'worker-a' };
+  store.setPendingUiRequest(confirmRequest);
+  assert.equal(cancelExtensionUiRequest(confirmRequest, { store, client }), true);
+  assert.deepEqual(sent.at(-1), {
+    type: 'extension_ui_response',
+    sessionWorkerId: 'worker-a',
+    id: 'confirm-2',
+    cancelled: true,
+  });
+}
+
+function testLoginTokenUrlConsumption() {
+  assert.deepEqual(consumeTokenFromFragment('#token=abc123&panel=sessions'), {
+    token: 'abc123',
+    nextHash: '#panel=sessions',
+    stripped: true,
+  });
+  assert.deepEqual(consumeTokenFromFragment('#panel=sessions'), {
+    token: null,
+    nextHash: '#panel=sessions',
+    stripped: false,
+  });
+
+  const fragmentResult = consumeLoginTokenFromUrl('https://phone.test/?fixture=0&token=query-token#token=fragment-token&panel=tree');
+  assert.equal(fragmentResult.token, 'fragment-token', 'fragment tokens take precedence over query tokens');
+  assert.equal(fragmentResult.nextPath, '/?fixture=0#panel=tree');
+  assert.equal(fragmentResult.stripped, true);
+
+  const queryResult = consumeLoginTokenFromUrl('https://phone.test/path?token=query+token&x=1#panel=tree');
+  assert.equal(queryResult.token, 'query token');
+  assert.equal(queryResult.nextPath, '/path?x=1#panel=tree');
+  assert.equal(queryResult.stripped, true);
+}
+
+async function testLoginTokenSubmissionAction() {
+  const health: PhoneHealth = {
+    cwd: '/repo',
+    hasToken: true,
+    isRunning: true,
+    childRunning: true,
+    isStreaming: false,
+    isCompacting: false,
+    host: '127.0.0.1',
+    port: 8765,
+    connectedClients: 1,
+    sessionCount: 1,
+    controlOwner: 'phone',
+    commandContextAvailable: true,
+  };
+
+  const store = createPiPhoneStateStore();
+  const accepted: Array<{ token: string; connect?: boolean; store?: boolean }> = [];
+  const okClient = {
+    async acceptToken(token: string, options?: { connect?: boolean; store?: boolean }) {
+      accepted.push({ token, ...options });
+      return health;
+    },
+  };
+
+  const success = await submitLoginToken('  valid-token  ', { client: okClient, stateStore: store });
+  assert.equal(success.ok, true);
+  assert.deepEqual(accepted, [{ token: 'valid-token', connect: true, store: undefined }]);
+  assert.equal(store.snapshot().auth.token, 'valid-token');
+  assert.equal(store.snapshot().auth.loginOpen, false);
+  assert.equal(store.snapshot().auth.authError, '');
+  assert.equal(store.snapshot().auth.health?.cwd, '/repo');
+
+  const invalidStore = createPiPhoneStateStore();
+  const rejected = await submitLoginToken('bad-token', {
+    stateStore: invalidStore,
+    client: {
+      async acceptToken() {
+        throw new PhoneAuthError();
+      },
+    },
+  });
+  assert.equal(rejected.ok, false);
+  assert.match(rejected.error, /token was rejected/i);
+  assert.equal(invalidStore.snapshot().auth.loginOpen, true);
+  assert.match(invalidStore.snapshot().auth.authError, /token was rejected/i);
+  assert.match(invalidStore.snapshot().feedback.toasts.at(-1)?.text || '', /token was rejected/i);
+
+  const emptyStore = createPiPhoneStateStore();
+  const empty = await submitLoginToken('   ', { client: okClient, stateStore: emptyStore });
+  assert.equal(empty.ok, false);
+  assert.equal(emptyStore.snapshot().auth.loginOpen, true);
+  assert.equal(emptyStore.snapshot().auth.authError, 'Enter the current /phone-start token.');
+}
+
 export async function run() {
   testMessageAdapterFixtures();
   testSnapshotEnvelopeReducer();
@@ -857,4 +1026,7 @@ export async function run() {
   await testPromptSubmissionRules();
   await testAttachmentOrderingRemovalAndPayload();
   testAttachmentStoreOrderingAndCleanupHooks();
+  testExtensionUiRequestActions();
+  testLoginTokenUrlConsumption();
+  await testLoginTokenSubmissionAction();
 }

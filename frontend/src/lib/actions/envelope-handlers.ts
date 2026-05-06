@@ -80,6 +80,17 @@ function clearSnapshotView(state: PhoneAppState) {
   clearTransientState(state);
 }
 
+function uiRequestKey(request: PhoneExtensionUiRequest | null | undefined) {
+  if (!request || request.id == null) return '';
+  return `${request.sessionWorkerId || ''}:${request.id}`;
+}
+
+function discardPendingUiRequest(state: PhoneAppState) {
+  const key = uiRequestKey(state.uiRequests.pending);
+  if (key) state.uiRequests.modalDrafts.delete(key);
+  state.uiRequests.pending = null;
+}
+
 function requestRefresh(state: PhoneAppState, options: { forceQuota?: boolean } = {}) {
   state.connection.refreshRequested = true;
   state.connection.refreshRequestId += 1;
@@ -523,7 +534,7 @@ function handleSessionCatalog(state: PhoneAppState, catalog: PhoneSessionCatalog
   state.sessions.active = catalog?.sessions || [];
   state.sessions.activeSessionId = nextActiveSessionId || null;
 
-  if (activeSessionChanged) state.uiRequests.pending = null;
+  if (activeSessionChanged) discardPendingUiRequest(state);
 
   if (activeSessionChanged && state.snapshot.workerId && state.snapshot.workerId !== state.sessions.activeSessionId) {
     clearSnapshotView(state);
@@ -625,7 +636,7 @@ export function handleAuthFailure() {
     state.connection.connectionState = 'auth-required';
     state.connection.socketReadyState = null;
     state.connection.manuallyClosed = true;
-    state.uiRequests.pending = null;
+    discardPendingUiRequest(state);
     setBanner(state, state.auth.authError, 'error');
     return state;
   });

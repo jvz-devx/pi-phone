@@ -58,8 +58,9 @@
 
   $effect(() => {
     const storeText = appState.composer.text;
-    const activeElement = typeof document === 'undefined' ? null : document.activeElement;
-    if (storeText !== text && (!textarea || textarea !== activeElement)) text = storeText;
+    if (storeText === text) return;
+    text = storeText;
+    void tick().then(syncAutocomplete);
   });
 
   $effect(() => {

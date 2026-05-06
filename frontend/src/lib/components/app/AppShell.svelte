@@ -13,6 +13,7 @@
   import InspectorPanel from './InspectorPanel.svelte';
   import SessionRail from './SessionRail.svelte';
   import TopStatusBar from './TopStatusBar.svelte';
+  import ExtensionUiDialog from './ExtensionUiDialog.svelte';
   import SheetBrowser from '$lib/components/sheets/SheetBrowser.svelte';
 
   const LEFT_PREF_KEY = 'pi-phone-shell-left-open';
@@ -202,6 +203,8 @@
       </div>
     </aside>
   </main>
+
+  <ExtensionUiDialog stateStore={stateStore} {client} />
 
   {#if activePanel}
     <div class="fixed inset-0 z-40 bg-background/70 backdrop-blur-sm lg:hidden" role="presentation" onclick={(event) => event.currentTarget === event.target && closeMobilePanel()}>

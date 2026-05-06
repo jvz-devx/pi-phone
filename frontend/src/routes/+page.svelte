@@ -1,19 +1,19 @@
 <script lang="ts">
   import { onMount } from 'svelte';
   import AppShell from '$lib/components/app/AppShell.svelte';
+  import LoginDialog from '$lib/components/app/LoginDialog.svelte';
+  import ToastHost from '$lib/components/feedback/ToastHost.svelte';
+  import { consumeLoginTokenFromCurrentUrl } from '$lib/actions/auth';
   import { transformPhoneMessages } from '$lib/adapters/message-adapter';
   import {
     applyClientNotice,
     registerPhoneClientStoreHandlers,
   } from '$lib/actions/envelope-handlers';
-  import { PhoneAuthError, phoneClient, readStoredToken, type PhoneHealth } from '$lib/pi-phone-transport';
+  import { phoneClient, readStoredToken, type PhoneHealth } from '$lib/pi-phone-transport';
   import { piPhoneState } from '$lib/stores/pi-phone-state';
   import type { PhoneRawMessage, PhoneStatus, PhoneUiToolMessage } from '$lib/types/pi-phone';
 
   let appState = $derived($piPhoneState);
-  let tokenInput = $state('');
-  let tokenBusy = $state(false);
-  let tokenError = $state('');
   let fixtureMode = $state(false);
   let booted = $state(false);
 
@@ -59,12 +59,6 @@
     { role: 'branchSummary', timestamp: 1700000004000, summary: 'This branch explored chat rendering parity.' },
     { role: 'compactionSummary', timestamp: 1700000005000, summary: 'Older context was compacted.', tokensBefore: 12345 },
   ] satisfies PhoneRawMessage[];
-
-  $effect(() => {
-    if ((appState.auth.loginOpen || appState.connection.connectionState === 'auth-required') && !tokenInput) {
-      tokenInput = appState.auth.token || readStoredToken();
-    }
-  });
 
   function seedFixtureState() {
     fixtureMode = true;
@@ -219,34 +213,8 @@
     piPhoneState.setConnectionState('open');
   }
 
-  async function submitToken() {
-    const nextToken = tokenInput.trim();
-    if (!nextToken) {
-      tokenError = 'Enter the current /phone-start token.';
-      return;
-    }
-
-    tokenBusy = true;
-    tokenError = '';
-    try {
-      await phoneClient.acceptToken(nextToken, { connect: true });
-      piPhoneState.setLoginOpen(false);
-      piPhoneState.clearAuthError();
-      piPhoneState.clearBanner();
-      tokenInput = '';
-    } catch (error) {
-      const message = error instanceof PhoneAuthError ? error.message : error instanceof Error ? error.message : String(error);
-      tokenError = message;
-      piPhoneState.setAuthError(message);
-      piPhoneState.setLoginOpen(true);
-    } finally {
-      tokenBusy = false;
-    }
-  }
-
   function openLogin() {
-    tokenInput = appState.auth.token || readStoredToken();
-    tokenError = '';
+    piPhoneState.clearAuthError();
     piPhoneState.setLoginOpen(true);
   }
 
@@ -258,6 +226,7 @@
       return;
     }
 
+    consumeLoginTokenFromCurrentUrl();
     const storedToken = readStoredToken();
     piPhoneState.reset({ token: storedToken });
     phoneClient.setToken(storedToken, { store: false });
@@ -282,40 +251,5 @@
 </svelte:head>
 
 <AppShell fixtureMode={fixtureMode} onOpenLogin={openLogin} />
-
-{#if appState.auth.loginOpen || appState.connection.connectionState === 'auth-required'}
-  <div class="fixed inset-0 z-50 grid place-items-center bg-background/80 p-4 backdrop-blur" aria-labelledby="login-title" role="dialog" aria-modal="true">
-    <form class="w-full max-w-md rounded-3xl border bg-card p-5 shadow-2xl" onsubmit={(event) => { event.preventDefault(); void submitToken(); }}>
-      <p class="text-xs font-semibold uppercase tracking-[0.22em] text-muted-foreground">Pi Phone</p>
-      <h1 id="login-title" class="mt-2 text-2xl font-semibold">Access token required</h1>
-      <p class="mt-2 text-sm leading-6 text-muted-foreground">
-        Enter the token printed by <code class="rounded bg-secondary px-1.5 py-0.5">/phone-start</code>. Invalid or expired tokens reopen this dialog.
-      </p>
-
-      <label class="mt-5 block text-sm font-medium" for="token-input">Access token</label>
-      <input
-        id="token-input"
-        class="mt-2 h-11 w-full rounded-xl border bg-background px-3 text-sm outline-none ring-ring transition focus:ring-2"
-        type="password"
-        bind:value={tokenInput}
-        placeholder="Paste token"
-        autocomplete="one-time-code"
-      />
-
-      {#if tokenError || appState.auth.authError}
-        <p class="mt-3 rounded-2xl border border-destructive/40 bg-destructive/10 p-3 text-sm text-destructive">{tokenError || appState.auth.authError}</p>
-      {/if}
-
-      <div class="mt-5 flex items-center justify-end gap-2">
-        {#if booted && !appState.auth.health?.hasToken}
-          <button class="rounded-xl px-3 py-2 text-sm text-muted-foreground hover:text-foreground" type="button" onclick={() => piPhoneState.setLoginOpen(false)}>
-            Continue without token
-          </button>
-        {/if}
-        <button class="rounded-xl bg-primary px-4 py-2 text-sm font-semibold text-primary-foreground disabled:opacity-60" type="submit" disabled={tokenBusy}>
-          {tokenBusy ? 'Checking…' : 'Connect'}
-        </button>
-      </div>
-    </form>
-  </div>
-{/if}
+<LoginDialog {booted} />
+<ToastHost />
