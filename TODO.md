@@ -160,6 +160,18 @@
   - `public/` remained untouched.
 - Conclusion: no further safe non-live code/fixture/guardrail gaps were found for Steps 60-73. Remaining work is live-device/browser/PWA parity verification and explicit cutover approval only.
 
+## Ad hoc desktop right panel controls fix
+
+- Finding: desktop right panel visibility is forced by `appState.sheets.open`, so controls that only toggled `rightOpen` could appear inert while the Pi Browser sheet was active.
+- Fix: AppShell now uses a sheet-aware right-panel collapse handler for the desktop header and desktop SheetBrowser close, switches the desktop Inspector action from Pi Browser to Inspector by clearing the active sheet and opening the right panel, and keeps the desktop Actions action opening the Actions sheet/right panel.
+- Coverage: lightweight fixture/static assertions cover the AppShell/SheetBrowser right-panel control wiring.
+- Validation:
+  - `cd frontend && npm run test:fixtures` passed.
+  - `npm run static:fallback:check` passed.
+  - `cd frontend && npm run check` passed with existing Svelte/CSS warnings only.
+  - `git diff --check` passed.
+- `public/` remained untouched.
+
 ## Explicit remaining TODOs from live QA
 
 - Step 60: steer button code/fixture coverage strengthened; live visibility/use still pending.

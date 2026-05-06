@@ -1,4 +1,5 @@
 import assert, { AssertionError } from 'node:assert/strict';
+import { readFileSync } from 'node:fs';
 
 import {
   activeAutocompleteContext,
@@ -675,6 +676,35 @@ function testMobileLayoutAndPanelPersistenceFixtures() {
 
   const collapsedPreview = buildToolPreview({ id: 'tool-a', kind: 'tool', toolName: 'bash', status: 'done', text: 'ok' }, { panelOpen: store.snapshot().tools.panelOpen });
   assert.equal(collapsedPreview.open, false, 'tool preview honors persisted collapsed panel state after remount');
+}
+
+function testDesktopRightPanelControlStaticCoverage() {
+  const appShellSource = readFileSync('src/lib/components/app/AppShell.svelte', 'utf8');
+  const sheetBrowserSource = readFileSync('src/lib/components/sheets/SheetBrowser.svelte', 'utf8');
+
+  assert.match(
+    appShellSource,
+    /function collapseRightPanel\(\) \{[\s\S]*stateStore\.setSheetOpen\(false\);[\s\S]*setRightOpen\(false\);[\s\S]*\}/,
+    'desktop right-panel collapse closes active sheets and collapses the persisted inspector panel',
+  );
+  assert.match(
+    appShellSource,
+    /function toggleInspector\(\) \{[\s\S]*if \(appState\.sheets\.open\) \{[\s\S]*stateStore\.setSheetOpen\(false\);[\s\S]*setRightOpen\(true\);[\s\S]*return;/,
+    'desktop Inspector action switches from Pi Browser to Inspector instead of only toggling rightOpen',
+  );
+  assert.match(
+    appShellSource,
+    /function openActions\(\) \{[\s\S]*stateStore\.setSheetMode\('actions', \{ open: true \}\);[\s\S]*if \(isDesktopLayout\(\)\) \{[\s\S]*setRightOpen\(true\);/,
+    'desktop Actions action always opens the Actions sheet and the right panel',
+  );
+  assert.match(appShellSource, /onToggleRight=\{toggleInspector\}/, 'top-bar desktop Inspector button uses the sheet-aware inspector toggle');
+  assert.match(appShellSource, /onclick=\{collapseRightPanel\}/, 'desktop right-panel header collapse button uses the full collapse handler');
+  assert.match(appShellSource, /<SheetBrowser[\s\S]*onClose=\{collapseRightPanel\}/, 'desktop SheetBrowser close collapses the whole right panel');
+  assert.match(
+    sheetBrowserSource,
+    /function close\(\) \{[\s\S]*stateStore\.setSheetOpen\(false\);[\s\S]*onClose\?\.\(\);[\s\S]*\}/,
+    'SheetBrowser still clears sheet state and delegates optional desktop panel collapse through onClose',
+  );
 }
 
 function testLiveAssistantStreamingReducers() {
@@ -1970,6 +2000,7 @@ export async function run() {
   testLiveToolReducers();
   testToolPreviewAdapterFixtures();
   testMobileLayoutAndPanelPersistenceFixtures();
+  testDesktopRightPanelControlStaticCoverage();
   testLiveAssistantStreamingReducers();
   testLateAssistantEventPreservesSettledMessage();
   testMessageUpdateWholeAssistantFallback();

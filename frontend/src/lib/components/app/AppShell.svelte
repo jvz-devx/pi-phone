@@ -83,6 +83,21 @@
     setRightOpen(!rightOpen);
   }
 
+  function collapseRightPanel() {
+    if (appState.sheets.open) stateStore.setSheetOpen(false);
+    setRightOpen(false);
+  }
+
+  function toggleInspector() {
+    if (appState.sheets.open) {
+      stateStore.setSheetOpen(false);
+      setRightOpen(true);
+      return;
+    }
+
+    toggleRight();
+  }
+
   function openMobilePanel(panel: Exclude<PhoneMobilePanel, null> | 'sessions') {
     const nextPanel = panel === 'sessions' ? 'active-sessions' : panel;
     mobilePanel = nextPanel;
@@ -315,9 +330,9 @@
   <TopStatusBar
     stateStore={stateStore}
     {leftOpen}
-    rightOpen={rightPanelOpen}
+    rightOpen={rightOpen && !appState.sheets.open}
     onToggleLeft={toggleLeft}
-    onToggleRight={toggleRight}
+    onToggleRight={toggleInspector}
     onOpenMobilePanel={(panel) => (panel === 'actions' ? openActions() : openMobilePanel(panel))}
     onRefresh={() => requestRefresh(true)}
     onOpenLogin={onOpenLogin}
@@ -359,12 +374,12 @@
             <p class="text-xs font-semibold uppercase tracking-[0.18em] text-muted-foreground">{appState.sheets.open ? 'Pi browser' : 'Inspector'}</p>
             <h2 class="text-base font-semibold">{appState.sheets.open ? drawerTitle(appState.sheets.mode) : 'Context and details'}</h2>
           </div>
-          <Button type="button" variant="ghost" size="icon-sm" aria-label="Collapse inspector" onclick={toggleRight}>
+          <Button type="button" variant="ghost" size="icon-sm" aria-label="Collapse inspector" onclick={collapseRightPanel}>
             <PanelRightClose class="size-4" aria-hidden="true" />
           </Button>
         </div>
         {#if appState.sheets.open}
-          <SheetBrowser stateStore={stateStore} {client} class="min-h-0 flex-1 overflow-y-auto" />
+          <SheetBrowser stateStore={stateStore} {client} class="min-h-0 flex-1 overflow-y-auto" onClose={collapseRightPanel} />
         {:else}
           <InspectorPanel stateStore={stateStore} {client} class="min-h-0 flex-1 overflow-y-auto" />
         {/if}
