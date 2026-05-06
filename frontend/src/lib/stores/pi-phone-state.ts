@@ -477,7 +477,10 @@ export function createPiPhoneStateStore(initialState: PhoneAppState = createInit
     section: K,
     updater: (sectionState: PhoneAppState[K], current: PhoneAppState) => PhoneAppState[K],
   ) {
-    store.update((current) => ({ ...current, [section]: updater(current[section], current) }));
+    const current = get(store);
+    const nextSection = updater(current[section], current);
+    if (Object.is(nextSection, current[section])) return;
+    store.set({ ...current, [section]: nextSection });
   }
 
   function updateConnection(patchValue: Partial<PhoneConnectionState>) {
@@ -644,16 +647,30 @@ export function createPiPhoneStateStore(initialState: PhoneAppState = createInit
   }
 
   function setFollowLatest(followLatest: boolean) {
-    updateSection('messages', (section) => ({
-      ...section,
-      followLatest,
-      lastAutoFollowAt: followLatest ? 0 : section.lastAutoFollowAt,
-      lastAutoFollowHeight: followLatest ? 0 : section.lastAutoFollowHeight,
-    }));
+    updateSection('messages', (section) => {
+      const nextLastAutoFollowAt = followLatest ? 0 : section.lastAutoFollowAt;
+      const nextLastAutoFollowHeight = followLatest ? 0 : section.lastAutoFollowHeight;
+      if (
+        section.followLatest === followLatest &&
+        section.lastAutoFollowAt === nextLastAutoFollowAt &&
+        section.lastAutoFollowHeight === nextLastAutoFollowHeight
+      ) {
+        return section;
+      }
+      return {
+        ...section,
+        followLatest,
+        lastAutoFollowAt: nextLastAutoFollowAt,
+        lastAutoFollowHeight: nextLastAutoFollowHeight,
+      };
+    });
   }
 
   function updateScrollFlags(patchValue: Partial<Omit<PhoneMessagesState, 'items' | 'liveAssistant'>>) {
-    updateSection('messages', (section) => ({ ...section, ...patchValue }));
+    updateSection('messages', (section) => {
+      if (Object.entries(patchValue).every(([key, value]) => Object.is(section[key as keyof typeof section], value))) return section;
+      return { ...section, ...patchValue };
+    });
   }
 
   function setLiveTools(tools: Map<string, PhoneUiToolMessage> | Iterable<[string, PhoneUiToolMessage]>) {
@@ -679,6 +696,7 @@ export function createPiPhoneStateStore(initialState: PhoneAppState = createInit
 
   function setToolPanelOpen(toolId: string, open: boolean) {
     updateSection('tools', (section) => {
+      if (section.panelOpen.get(toolId) === open) return section;
       const panelOpen = new Map(section.panelOpen);
       panelOpen.set(toolId, open);
       return { ...section, panelOpen };
@@ -686,7 +704,7 @@ export function createPiPhoneStateStore(initialState: PhoneAppState = createInit
   }
 
   function setSelectedToolId(toolId: string | null) {
-    updateSection('tools', (section) => ({ ...section, selectedToolId: toolId }));
+    updateSection('tools', (section) => (section.selectedToolId === toolId ? section : { ...section, selectedToolId: toolId }));
   }
 
   function setCommands(commands: PhoneCommand[]) {
@@ -718,11 +736,14 @@ export function createPiPhoneStateStore(initialState: PhoneAppState = createInit
   }
 
   function setComposerText(text: string) {
-    updateSection('composer', (section) => ({ ...section, text }));
+    updateSection('composer', (section) => (section.text === text ? section : { ...section, text }));
   }
 
   function updateComposer(patchValue: Partial<PhoneComposerState>) {
-    updateSection('composer', (section) => ({ ...section, ...patchValue }));
+    updateSection('composer', (section) => {
+      if (Object.entries(patchValue).every(([key, value]) => Object.is(section[key as keyof typeof section], value))) return section;
+      return { ...section, ...patchValue };
+    });
   }
 
   function resetComposer() {

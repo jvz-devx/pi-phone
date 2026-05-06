@@ -18,6 +18,11 @@ export default defineConfig({
             target: phoneBackendWs,
             ws: true,
             changeOrigin: true,
+            configure: (proxy) => {
+              proxy.on('proxyReqWs', (proxyReq) => {
+                if (phoneBackend) proxyReq.setHeader('origin', phoneBackend);
+              });
+            },
           },
         },
       }

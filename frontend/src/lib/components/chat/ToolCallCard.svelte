@@ -36,7 +36,7 @@
   });
 
   $effect(() => {
-    if (!initializedKey) return;
+    if (!initializedKey || storedOpen === open) return;
     stateStore.setToolPanelOpen(item.id, open);
   });
 

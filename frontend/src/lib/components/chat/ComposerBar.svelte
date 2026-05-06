@@ -76,7 +76,10 @@
   });
 
   $effect(() => {
-    stateStore.updateComposer({ steerAvailable: canSteer(appState) });
+    const nextSteerAvailable = canSteer(appState);
+    if (appState.composer.steerAvailable !== nextSteerAvailable) {
+      stateStore.updateComposer({ steerAvailable: nextSteerAvailable });
+    }
   });
 
   $effect(() => {
