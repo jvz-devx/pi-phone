@@ -42,6 +42,17 @@ type AnyCtx = ExtensionContext | ExtensionCommandContext;
 type SessionStartReason = "startup" | "reload" | "new" | "resume" | "fork";
 type SessionShutdownReason = "quit" | "reload" | "new" | "resume" | "fork";
 
+export type PhoneLaunchInfo = {
+  host: string;
+  port: number;
+  token: string;
+  cwd: string;
+};
+
+export type PhoneStartResult = PhoneLaunchInfo & {
+  reused: boolean;
+};
+
 type SlashCommandMatch = {
   text: string;
   name: string;
@@ -1550,6 +1561,16 @@ export class PhoneServerRuntime {
     this.updateStatusUi(this.latestCtx);
   }
 
+  getLaunchInfo(): PhoneLaunchInfo | null {
+    if (!this.server) return null;
+    return {
+      host: this.config.host,
+      port: this.config.port,
+      token: this.config.token,
+      cwd: this.config.cwd,
+    };
+  }
+
   statusText() {
     const url = `http://${this.config.host}:${this.config.port}`;
     const idleMinutes = this.config.idleTimeoutMs > 0 ? `${Math.max(1, Math.round(this.config.idleTimeoutMs / 60_000))}m idle auto-stop` : "idle auto-stop disabled";
@@ -1558,7 +1579,7 @@ export class PhoneServerRuntime {
       : "Pi Phone is stopped";
   }
 
-  async handlePhoneStart(args: string | undefined, ctx: ExtensionCommandContext) {
+  async handlePhoneStart(args: string | undefined, ctx: ExtensionCommandContext): Promise<PhoneStartResult | null> {
     this.captureCtx(ctx);
     return this.enqueueLifecycleCommand(() => this.handlePhoneStartOnce(args, ctx));
   }
@@ -1573,7 +1594,7 @@ export class PhoneServerRuntime {
     return !this.stopping && generation === this.lifecycleGeneration && Boolean(this.server);
   }
 
-  private async handlePhoneStartOnce(args: string | undefined, ctx: ExtensionCommandContext) {
+  private async handlePhoneStartOnce(args: string | undefined, ctx: ExtensionCommandContext): Promise<PhoneStartResult | null> {
     this.captureCtx(ctx);
     this.config.cwd = this.activeCwd();
     if (this.stopPromise) {
@@ -1588,13 +1609,14 @@ export class PhoneServerRuntime {
 
     if (!nextConfig.token && !this.isLoopbackOrLocalhostName(nextConfig.host)) {
       ctx.ui.notify("Refusing to start Pi Phone without a token on a non-loopback host. Use a token, or bind to 127.0.0.1/localhost for local development.", "warning");
-      return;
+      return null;
     }
 
     const changed = ["host", "port", "token", "cwd", "idleTimeoutMs"].some(
       (key) => nextConfig[key as keyof PhoneConfig] !== this.config[key as keyof PhoneConfig],
     );
     const generatedToken = nextConfig.token && nextConfig.token !== this.config.token && !parsed.tokenSpecified;
+    const reusedExistingServer = Boolean(this.server && !changed);
     this.config = nextConfig;
 
     if (this.server && changed) {
@@ -1615,22 +1637,22 @@ export class PhoneServerRuntime {
               : `Port ${this.config.host}:${this.config.port} is already in use. If it is another Pi Phone instance, run /phone-stop, then /phone-start again.`,
             "warning",
           );
-          return;
+          return null;
         }
         throw error;
       }
     }
 
     const postStartGeneration = this.lifecycleGeneration;
-    if (!this.isStartPostWorkCurrent(postStartGeneration)) return;
+    if (!this.isStartPostWorkCurrent(postStartGeneration)) return null;
 
     await this.sessionPool?.ensureDefaultWorker();
-    if (!this.isStartPostWorkCurrent(postStartGeneration)) return;
+    if (!this.isStartPostWorkCurrent(postStartGeneration)) return null;
 
     const tailscale = await enableTailscaleServe(this.pi, this.config.port);
     if (!this.isStartPostWorkCurrent(postStartGeneration)) {
       await disableMatchingTailscaleServe(this.pi, this.config.port);
-      return;
+      return null;
     }
 
     this.updateStatusUi(ctx);
@@ -1653,6 +1675,9 @@ export class PhoneServerRuntime {
     } else if (this.config.token) {
       ctx.ui.notify("Token required: use the token you started this server with.", "info");
     }
+
+    const launch = this.getLaunchInfo();
+    return launch ? { ...launch, reused: reusedExistingServer } : null;
   }
 
   async handlePhoneStop(ctx: ExtensionCommandContext) {

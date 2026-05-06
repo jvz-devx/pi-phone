@@ -171,12 +171,16 @@ LAN-friendly shortcut for personal setups:
 
 Behavior:
 
+- first asks whether to show a QR login code
 - default host: `PI_PHONE_HOST` or `0.0.0.0`
 - default port: `PI_PHONE_PORT` or `8787`
 - auto-picks the next free port when no port is provided
 - default token: `PI_PHONE_TOKEN`, or a generated token if unset
 - default idle timeout: `PI_PHONE_IDLE_MINS` / `PI_PHONE_IDLE_MINUTES`, or `9999` minutes
 - any extra args are passed through to `/phone-start`
+- when QR is enabled, starts the server, asks which detected address/IP to encode, and prints a terminal QR code
+
+The QR login link includes the active Pi Phone token in the URL fragment (`#token=...`) when token auth is enabled. The web app stores that token locally and strips it from the visible address bar before normal boot.
 
 ### `/phone-lan`
 

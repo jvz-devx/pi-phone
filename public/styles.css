@@ -21,9 +21,9 @@
   --user-bg: rgba(31, 48, 63, 0.95);
   --tool-bg: rgba(19, 31, 42, 0.85);
   --system-bg: rgba(14, 20, 28, 0.86);
-  --radius: 18px;
-  --shadow: 0 18px 42px rgba(0, 0, 0, 0.28);
-  --composer-reserve: 11.5rem;
+  --radius: 14px;
+  --shadow: 0 12px 28px rgba(0, 0, 0, 0.26);
+  --composer-reserve: 8.4rem;
 }
 
 * {
@@ -58,11 +58,11 @@ textarea {
 button {
   appearance: none;
   border: 1px solid var(--border-strong);
-  border-radius: 14px;
+  border-radius: 11px;
   background: linear-gradient(180deg, var(--accent), var(--accent-2));
   color: #071018;
   font-weight: 700;
-  padding: 0.8rem 1rem;
+  padding: 0.58rem 0.78rem;
 }
 
 button.secondary {
@@ -86,8 +86,8 @@ textarea {
   background: rgba(7, 12, 16, 0.95);
   color: var(--text);
   border: 1px solid var(--border);
-  border-radius: 16px;
-  padding: 0.95rem 1rem;
+  border-radius: 12px;
+  padding: 0.68rem 0.78rem;
 }
 
 textarea {
@@ -114,16 +114,16 @@ pre {
 .app-shell {
   max-width: 980px;
   margin: 0 auto;
-  padding: 4.7rem 0.95rem calc(var(--composer-reserve) + env(safe-area-inset-bottom) + 1rem);
+  padding: 3.45rem 0.72rem calc(var(--composer-reserve) + env(safe-area-inset-bottom) + 0.75rem);
 }
 
 .sidebar-toggle-button {
   position: fixed;
-  top: calc(env(safe-area-inset-top) + 0.9rem);
-  left: 0.9rem;
+  top: calc(env(safe-area-inset-top) + 0.62rem);
+  left: 0.72rem;
   z-index: 18;
   border-radius: 999px;
-  padding: 0.72rem 0.95rem;
+  padding: 0.5rem 0.68rem;
   background: rgba(20, 32, 42, 0.96);
   color: var(--text);
   box-shadow: var(--shadow);
@@ -133,14 +133,16 @@ pre {
   display: flex;
   justify-content: space-between;
   align-items: flex-start;
-  gap: 1rem;
-  margin-bottom: 1rem;
+  gap: 0.75rem;
+  margin-bottom: 0.7rem;
 }
 
 .topbar h1,
 .modal-card h2,
 .sheet-card h2 {
-  margin: 0.16rem 0 0;
+  margin: 0.1rem 0 0;
+  font-size: 1.28rem;
+  line-height: 1.15;
 }
 
 .subtitle,
@@ -158,8 +160,8 @@ pre {
 
 .subtitle,
 .modal-copy {
-  margin: 0.45rem 0 0;
-  line-height: 1.4;
+  margin: 0.28rem 0 0;
+  line-height: 1.32;
 }
 
 .status-pill,
@@ -170,8 +172,8 @@ pre {
   border: 1px solid var(--border-strong);
   background: rgba(16, 31, 42, 0.88);
   color: var(--accent);
-  padding: 0.45rem 0.78rem;
-  font-size: 0.88rem;
+  padding: 0.32rem 0.58rem;
+  font-size: 0.8rem;
 }
 
 .status-pill.offline {
@@ -197,19 +199,19 @@ pre {
 .banner,
 .widget-card,
 .sheet-section {
-  padding: 1rem;
+  padding: 0.72rem;
 }
 
 .status-card,
 .banner,
 .widget-stack {
-  margin-bottom: 1rem;
+  margin-bottom: 0.72rem;
 }
 
 .status-grid {
   display: grid;
   grid-template-columns: repeat(2, minmax(0, 1fr));
-  gap: 0.9rem 1rem;
+  gap: 0.58rem 0.72rem;
 }
 
 .value {
@@ -219,8 +221,8 @@ pre {
 
 .button-row {
   display: flex;
-  gap: 0.7rem;
-  margin-top: 1rem;
+  gap: 0.48rem;
+  margin-top: 0.7rem;
   flex-wrap: wrap;
 }
 
@@ -249,7 +251,7 @@ pre {
 
 .widget-stack {
   display: grid;
-  gap: 0.8rem;
+  gap: 0.58rem;
 }
 
 .widget-card h3 {
@@ -284,23 +286,23 @@ pre {
 .messages {
   display: flex;
   flex-direction: column;
-  gap: 0.85rem;
-  min-height: 42vh;
-  padding-bottom: 0.85rem;
+  gap: 0.58rem;
+  min-height: 34vh;
+  padding-bottom: 0.55rem;
 }
 
 .message {
-  padding: 0.95rem 1rem;
+  padding: 0.68rem 0.78rem;
 }
 
 .message.user {
   background: var(--user-bg);
-  margin-left: 1.8rem;
+  margin-left: 0.8rem;
 }
 
 .message.assistant {
   background: var(--assistant-bg);
-  margin-right: 0.6rem;
+  margin-right: 0.25rem;
 }
 
 .message.tool {
@@ -317,8 +319,8 @@ pre {
   display: flex;
   justify-content: space-between;
   align-items: center;
-  gap: 0.8rem;
-  margin-bottom: 0.65rem;
+  gap: 0.58rem;
+  margin-bottom: 0.44rem;
 }
 
 .role-badge {
@@ -337,7 +339,7 @@ pre {
 }
 
 .message-body {
-  line-height: 1.46;
+  line-height: 1.4;
 }
 
 .message-body p {
@@ -460,7 +462,7 @@ pre {
   display: flex;
   align-items: flex-start;
   justify-content: space-between;
-  gap: 0.8rem;
+  gap: 0.58rem;
 }
 
 .tool-panel-summary::after {
@@ -530,7 +532,7 @@ pre {
 
 .tool-panel-body {
   display: grid;
-  gap: 0.65rem;
+  gap: 0.48rem;
   margin-top: 0.75rem;
 }
 
@@ -661,7 +663,7 @@ pre {
 .tool-entry-row {
   display: grid;
   grid-template-columns: minmax(2.2rem, auto) minmax(0, 1fr);
-  gap: 0.7rem;
+  gap: 0.5rem;
   align-items: start;
   padding: 0.18rem 0.75rem;
 }
@@ -748,7 +750,7 @@ pre {
   left: 0;
   right: 0;
   bottom: 0;
-  padding: 0 0.95rem calc(env(safe-area-inset-bottom) + 0.75rem);
+  padding: 0 0.72rem calc(env(safe-area-inset-bottom) + 0.55rem);
   background: linear-gradient(180deg, rgba(7, 13, 19, 0) 0%, rgba(7, 13, 19, 0.94) 26%, rgba(7, 13, 19, 0.99) 100%);
 }
 
@@ -757,38 +759,38 @@ pre {
   margin: 0 auto;
   background: var(--bg-elevated);
   border: 1px solid var(--border);
-  border-radius: 22px;
+  border-radius: 16px;
   box-shadow: var(--shadow);
-  padding: 0.82rem;
+  padding: 0.58rem;
 }
 
 .composer-input-row {
   display: flex;
   align-items: flex-end;
-  gap: 0.65rem;
+  gap: 0.48rem;
 }
 
 .composer textarea {
-  min-height: 52px;
-  max-height: 200px;
+  min-height: 40px;
+  max-height: 160px;
   flex: 1 1 auto;
 }
 
 .composer-inline-button {
   flex: 0 0 auto;
-  min-height: 52px;
-  border-radius: 16px;
+  min-height: 40px;
+  border-radius: 12px;
 }
 
 .stop-button {
-  min-width: 72px;
-  padding: 0.7rem 0.95rem;
+  min-width: 58px;
+  padding: 0.5rem 0.7rem;
 }
 
 .send-button {
-  min-width: 48px;
-  padding: 0.7rem 0.9rem;
-  font-size: 1.35rem;
+  min-width: 42px;
+  padding: 0.48rem 0.68rem;
+  font-size: 1.1rem;
   line-height: 1;
 }
 
@@ -796,12 +798,12 @@ pre {
   display: flex;
   gap: 0.6rem;
   overflow-x: auto;
-  margin-bottom: 0.7rem;
+  margin-bottom: 0.48rem;
   padding-bottom: 0.15rem;
 }
 
 .composer > .command-strip {
-  margin-bottom: 0.7rem;
+  margin-bottom: 0.48rem;
 }
 
 .attachment-chip {
@@ -865,8 +867,8 @@ pre {
 .composer-actions {
   display: flex;
   justify-content: flex-start;
-  gap: 0.5rem;
-  margin-top: 0.72rem;
+  gap: 0.42rem;
+  margin-top: 0.5rem;
   flex-wrap: nowrap;
   overflow-x: auto;
   overscroll-behavior-x: contain;
@@ -880,10 +882,10 @@ pre {
 }
 
 .composer-actions button {
-  min-height: 40px;
-  padding: 0.54rem 0.82rem;
-  border-radius: 13px;
-  font-size: 0.92rem;
+  min-height: 34px;
+  padding: 0.38rem 0.62rem;
+  border-radius: 10px;
+  font-size: 0.84rem;
 }
 
 .quota-row {
@@ -964,7 +966,7 @@ pre {
   display: flex;
   align-items: center;
   justify-content: center;
-  padding: 1rem;
+  padding: 0.72rem;
   z-index: 30;
 }
 
@@ -974,7 +976,7 @@ pre {
 
 .modal-card,
 .sheet-card {
-  padding: 1rem;
+  padding: 0.72rem;
 }
 
 .modal-card.narrow {
@@ -986,7 +988,7 @@ pre {
 .sheet-list,
 .model-list {
   display: grid;
-  gap: 0.7rem;
+  gap: 0.5rem;
 }
 
 .option-list button,
@@ -1009,12 +1011,12 @@ pre {
   color: var(--text);
   border: 1px solid var(--border);
   border-radius: 14px;
-  padding: 0.8rem 0.95rem;
+  padding: 0.58rem 0.72rem;
 }
 
 .sheet-card {
   width: min(100%, 860px);
-  max-height: min(88vh, 920px);
+  max-height: min(92vh, 920px);
   overflow: auto;
 }
 
@@ -1022,8 +1024,8 @@ pre {
   display: flex;
   justify-content: space-between;
   align-items: flex-start;
-  gap: 1rem;
-  margin-bottom: 1rem;
+  gap: 0.75rem;
+  margin-bottom: 0.7rem;
 }
 
 .sheet-header-actions {
@@ -1036,28 +1038,28 @@ pre {
 
 .sheet-content {
   display: grid;
-  gap: 0.9rem;
+  gap: 0.6rem;
 }
 
 .sheet-section h3 {
-  margin: 0 0 0.75rem;
+  margin: 0 0 0.52rem;
   font-size: 1rem;
 }
 
 .sheet-actions {
   display: grid;
-  gap: 0.7rem;
+  gap: 0.5rem;
 }
 
 .sheet-action-row {
   display: grid;
-  gap: 0.65rem;
+  gap: 0.48rem;
 }
 
 .stat-grid {
   display: grid;
   grid-template-columns: repeat(2, minmax(0, 1fr));
-  gap: 0.65rem;
+  gap: 0.48rem;
 }
 
 .stat-chip {
@@ -1074,15 +1076,15 @@ pre {
 .jump-to-latest-button {
   position: fixed;
   left: 50%;
-  bottom: calc(var(--composer-reserve) - 0.35rem);
+  bottom: calc(var(--composer-reserve) - 0.28rem);
   transform: translateX(-50%);
   z-index: 20;
-  min-width: 3.2rem;
-  padding: 0.82rem;
+  min-width: 2.7rem;
+  padding: 0.58rem;
   border-radius: 999px;
   background: rgba(20, 32, 42, 0.96);
   color: var(--text);
-  font-size: 1.45rem;
+  font-size: 1.2rem;
   line-height: 1;
   box-shadow: var(--shadow);
   backdrop-filter: blur(10px);
@@ -1103,7 +1105,7 @@ pre {
 
 .toast {
   max-width: min(92vw, 560px);
-  padding: 0.8rem 1rem;
+  padding: 0.58rem 0.78rem;
   background: rgba(16, 24, 33, 0.98);
   border: 1px solid var(--border);
   border-radius: 14px;
@@ -1117,14 +1119,14 @@ pre {
 
 @media (max-width: 767px) {
   .sidebar-toggle-button {
-    left: 0.75rem;
+    left: 0.6rem;
   }
 }
 
 @media (min-width: 768px) {
   .app-shell {
-    padding-left: 1.2rem;
-    padding-right: 1.2rem;
+    padding-left: 0.9rem;
+    padding-right: 0.9rem;
   }
 
   .status-grid,
@@ -1133,7 +1135,7 @@ pre {
   }
 
   .composer-wrap {
-    padding-left: 1.2rem;
-    padding-right: 1.2rem;
+    padding-left: 0.9rem;
+    padding-right: 0.9rem;
   }
 }
