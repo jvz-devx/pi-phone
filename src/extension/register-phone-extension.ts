@@ -180,6 +180,34 @@ async function phoneQrChoices(pi: ExtensionAPI, host: string, port: number, toke
   return choices;
 }
 
+function launchInfoFromRuntime(runtime: PhoneServerRuntime, launch: PhoneLaunchInfo | null | undefined) {
+  if (launch) return launch;
+
+  const runtimeWithGetter = runtime as PhoneServerRuntime & { getLaunchInfo?: () => PhoneLaunchInfo | null };
+  if (typeof runtimeWithGetter.getLaunchInfo === "function") {
+    try {
+      const currentLaunch = runtimeWithGetter.getLaunchInfo();
+      if (currentLaunch) return currentLaunch;
+    } catch {
+      // Fall through to the stale-runtime compatibility path below.
+    }
+  }
+
+  // Compatibility for a /reload after upgrading from pi-phone <= 0.0.13: the old
+  // runtime object is intentionally kept in globalThis so the live server survives,
+  // but its handlePhoneStart() returned void and did not expose getLaunchInfo().
+  const staleRuntime = runtime as unknown as { server?: unknown; config?: Partial<PhoneLaunchInfo> };
+  if (!staleRuntime.server || !staleRuntime.config) return null;
+  const { host, port, token, cwd } = staleRuntime.config;
+  if (typeof host !== "string" || typeof port !== "number") return null;
+  return {
+    host,
+    port,
+    token: typeof token === "string" ? token : "",
+    cwd: typeof cwd === "string" ? cwd : process.cwd(),
+  } satisfies PhoneLaunchInfo;
+}
+
 async function maybeShowPhoneQr(pi: ExtensionAPI, launch: PhoneLaunchInfo | null, ctx: ExtensionCommandContext) {
   if (!launch) {
     ctx.ui.notify("Pi Phone did not start, so no QR code was shown.", "warning");
@@ -259,7 +287,8 @@ export default function registerPhoneExtension(pi: ExtensionAPI) {
 
       const defaults = phoneShortcutDefaults();
       const port = hasExplicitPort(args) ? defaults.port : await findFreePort(defaults.host, defaults.port);
-      const launch = await runtime.handlePhoneStart(buildPhoneArgs({ ...defaults, port }, args || ""), ctx);
+      const startResult = await runtime.handlePhoneStart(buildPhoneArgs({ ...defaults, port }, args || ""), ctx);
+      const launch = launchInfoFromRuntime(runtime, startResult);
       if (qrChoice === "Show QR code") await maybeShowPhoneQr(pi, launch, ctx);
     },
   });
