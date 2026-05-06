@@ -1,0 +1,148 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover" />
+    <meta name="theme-color" content="#0b0f14" />
+    <meta name="referrer" content="no-referrer" />
+    <title>Pi Phone</title>
+    <link rel="manifest" href="/manifest.webmanifest?v=20260506-1" />
+    <link rel="icon" href="/icon.svg" type="image/svg+xml" />
+    <link rel="apple-touch-icon" href="/icon.svg" />
+    <link rel="stylesheet" href="/styles.css?v=20260506-1" />
+  </head>
+  <body>
+    <button id="session-sidebar-button" class="sidebar-toggle-button secondary" aria-label="Open session browser" title="Open session browser">☰ Sessions</button>
+
+    <div class="app-shell">
+      <header class="topbar">
+        <div>
+          <div class="eyebrow">Pi Phone</div>
+          <h1>Pi, but couch-friendly</h1>
+          <p class="subtitle">Your current Pi setup, extensions, skills, and prompts — in a phone UI.</p>
+        </div>
+        <div class="status-pill" id="connection-pill">Connecting…</div>
+      </header>
+
+      <section class="status-card">
+        <div class="status-grid">
+          <div>
+            <div class="label">Working directory</div>
+            <div class="value mono" id="cwd-value">—</div>
+          </div>
+          <div>
+            <div class="label">Session</div>
+            <div class="value" id="session-value">—</div>
+          </div>
+          <div>
+            <div class="label">Model</div>
+            <div class="value" id="model-value">—</div>
+          </div>
+          <div>
+            <div class="label">Thinking</div>
+            <div class="value" id="thinking-value">—</div>
+          </div>
+          <div>
+            <div class="label">State</div>
+            <div class="value" id="streaming-value">Idle</div>
+          </div>
+          <div>
+            <div class="label">Server</div>
+            <div class="value mono" id="server-value">—</div>
+          </div>
+        </div>
+        <div class="button-row compact">
+          <button id="actions-button" class="secondary">Actions</button>
+          <button id="refresh-button" class="secondary">Refresh</button>
+          <button id="tree-browser-button" class="secondary">Tree</button>
+          <button id="abort-button" class="danger">Abort</button>
+        </div>
+      </section>
+
+      <section id="banner" class="banner hidden"></section>
+      <section id="widget-stack" class="widget-stack hidden"></section>
+
+      <main id="messages" class="messages" aria-live="polite"></main>
+
+      <section class="composer-wrap">
+        <div class="composer">
+          <input id="image-input" type="file" accept="image/*" multiple class="hidden" />
+          <div id="attachment-strip" class="attachment-strip hidden"></div>
+          <section id="command-strip" class="command-strip hidden"></section>
+          <div class="composer-input-row">
+            <textarea
+              id="prompt-input"
+              rows="1"
+              maxlength="20000"
+              placeholder="Message Pi…"
+              autocomplete="off"
+              autocapitalize="sentences"
+              spellcheck="true"
+              enterkeyhint="enter"
+            ></textarea>
+            <button id="stop-button" class="composer-inline-button stop-button danger hidden" aria-label="Stop response" title="Stop response">Stop</button>
+            <button id="send-button" class="composer-inline-button send-button" aria-label="Send message" title="Send message">&gt;</button>
+          </div>
+          <div class="composer-actions">
+            <button id="attach-image-button" class="secondary">Attach</button>
+            <button id="insert-command-button" class="secondary">Commands</button>
+            <button id="cd-command-button" class="secondary">/cd</button>
+            <button id="steer-button" class="secondary hidden">Steer</button>
+          </div>
+          <div id="quota-row" class="quota-row hidden" aria-live="polite">
+            <div id="quota-meta-row" class="quota-meta-row hidden">
+              <span id="quota-cwd" class="quota-pill cwd-pill mono"></span>
+            </div>
+            <div id="quota-pills-row" class="quota-pills-row hidden">
+              <span id="quota-context" class="quota-pill quota-context-pill mono hidden"></span>
+              <span id="quota-primary" class="quota-pill"></span>
+              <span id="quota-secondary" class="quota-pill"></span>
+            </div>
+          </div>
+        </div>
+      </section>
+    </div>
+
+    <div id="login-modal" class="modal-backdrop hidden">
+      <div class="modal-card narrow">
+        <h2>Access token required</h2>
+        <p class="modal-copy">Enter the app token configured in <code>/phone-start</code>.</p>
+        <input id="token-input" type="password" placeholder="App token" autocomplete="new-password" autocapitalize="none" autocorrect="off" spellcheck="false" />
+        <div class="button-row">
+          <button id="token-save-button">Connect</button>
+        </div>
+      </div>
+    </div>
+
+    <div id="ui-modal" class="modal-backdrop hidden">
+      <div class="modal-card">
+        <h2 id="ui-modal-title">Action required</h2>
+        <p id="ui-modal-message" class="modal-copy"></p>
+        <div id="ui-modal-options" class="option-list"></div>
+        <textarea id="ui-modal-input" class="hidden" rows="8"></textarea>
+        <div class="button-row" id="ui-modal-buttons"></div>
+      </div>
+    </div>
+
+    <div id="sheet-modal" class="modal-backdrop hidden">
+      <div class="modal-card sheet-card">
+        <div class="sheet-header">
+          <div>
+            <div class="eyebrow">Pi control center</div>
+            <h2 id="sheet-title">Actions</h2>
+          </div>
+          <div class="sheet-header-actions">
+            <button id="sheet-saved-sessions-button" class="secondary hidden">Saved sessions</button>
+            <button id="sheet-close-button" class="secondary">Close</button>
+          </div>
+        </div>
+        <div id="sheet-content" class="sheet-content"></div>
+      </div>
+    </div>
+
+    <button id="jump-to-latest-button" class="jump-to-latest-button hidden secondary" type="button" aria-label="Jump to latest message">▾</button>
+    <div id="toast-host" class="toast-host"></div>
+
+    <script type="module" src="/app.js?v=20260506-1"></script>
+  </body>
+</html>

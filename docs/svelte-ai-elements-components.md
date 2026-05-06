@@ -1,0 +1,34 @@
+# Svelte AI Elements component context
+
+- Actions — Row of action buttons for AI responses, such as retry, like/dislike, copy, and share.
+- Artifact — Structured container for generated outputs like code or documents with header actions and content areas.
+- Chain of Thought — Collapsible timeline for an assistant's reasoning steps, searches, images, and intermediate content.
+- Checkpoint — Restore/save-point UI for moving a conversation or generated artifact back to a prior state.
+- Code Block — Syntax-highlighted code renderer with copy support and overflow handling.
+- Confirmation — Approval/rejection UI for tool calls, risky actions, or other user-confirmed operations.
+- Context — Token/cost/cache usage display for prompt, output, and reasoning context.
+- Conversation — Scrollable conversation container with stick-to-bottom behavior and empty-state support.
+- Image — Image display component for AI-generated or user-attached images.
+- Inline Citation — Inline source/citation primitives with tooltip, hover-card, quote, and carousel views.
+- Loader — Lightweight loading indicator for AI response or tool activity.
+- Message — Role-aware chat message primitives with markdown responses, attachments, branching, and action slots.
+- Model Selector — Dialog/command-palette style model picker with provider logos, groups, and shortcuts.
+- Open in Chat — Menu for opening prompts/content in external chat products like ChatGPT, Claude, v0, or T3 Chat.
+- Plan — Collapsible execution-plan display with steps and streaming shimmer states.
+- Prompt Input — Composable chat composer with textarea, attachments, toolbar/actions, and submit controls.
+- Queue — Grouped queue display for pending prompts, files, images, and item actions.
+- Reasoning — Collapsible reasoning disclosure for assistant thinking or analysis content.
+- Response — Markdown/streaming response renderer powered by `svelte-streamdown`.
+- Shimmer — Animated shimmer text/content placeholder for streaming or loading content.
+- Sources — Collapsible source list for showing references used by an AI response.
+- Suggestion — Horizontal suggestion chips/buttons for prompt starters or follow-up actions.
+- Task — Collapsible task/status item display for work plans, files, and progress states.
+- Tool — Collapsible tool-call display for inputs, outputs, states, and code/result previews.
+- Web Preview — Browser-like preview frame with URL input, controls, and collapsible preview area.
+- Workflow Canvas — XYFlow/Svelte canvas wrapper for visual workflow graphs.
+- Workflow Connection — XYFlow connection-line primitive for workflow editor interactions.
+- Workflow Controls — Zoom/fit/viewport controls for workflow canvases.
+- Workflow Edge — Custom edge primitive for workflow graph links.
+- Workflow Node — Card-backed node primitive for workflow graph nodes.
+- Workflow Panel — Positioned panel primitive for workflow canvas overlays.
+- Workflow Toolbar — Toolbar primitive for workflow node/canvas actions.

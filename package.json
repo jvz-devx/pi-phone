@@ -27,6 +27,7 @@
     "phone-session-pool.ts",
     "src",
     "public",
+    "frontend",
     "README.md"
   ],
   "pi": {
@@ -36,7 +37,14 @@
   },
   "scripts": {
     "typecheck": "tsc --noEmit",
-    "test": "npm run typecheck"
+    "test": "npm run typecheck && npm run frontend:test:fixtures",
+    "frontend:install": "npm install --prefix frontend",
+    "frontend:test:fixtures": "npm run test:fixtures --prefix frontend",
+    "frontend:dev": "npm run dev --prefix frontend",
+    "frontend:check": "npm run check --prefix frontend",
+    "frontend:build": "npm run build --prefix frontend",
+    "frontend:preview": "npm run preview --prefix frontend",
+    "frontend:shadcn:add": "npm run shadcn:add --prefix frontend --"
   },
   "dependencies": {
     "qrcode": "^1.5.4",

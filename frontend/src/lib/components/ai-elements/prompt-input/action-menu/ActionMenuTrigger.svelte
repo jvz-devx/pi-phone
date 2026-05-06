@@ -1,0 +1,23 @@
+<script lang="ts">
+	import * as DropdownMenu from "$lib/components/ui/dropdown-menu/index.js";
+	import Button from "../controls/Button.svelte";
+	import type { ButtonProps } from "$lib/components/ui/button/index.js";
+	import PlusIcon from "@lucide/svelte/icons/plus";
+
+	interface Props extends ButtonProps {
+		class?: string;
+		children?: import("svelte").Snippet;
+	}
+
+	let { class: className, children, ...props }: Props = $props();
+</script>
+
+<DropdownMenu.Trigger>
+	<Button class={className} {...props}>
+		{#if children}
+			{@render children()}
+		{:else}
+			<PlusIcon class="size-4" />
+		{/if}
+	</Button>
+</DropdownMenu.Trigger>
