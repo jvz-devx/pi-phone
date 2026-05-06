@@ -74,20 +74,28 @@ function ansiColorToCss(value: string | undefined) {
   return "";
 }
 
+function themeColorToCss(theme: ThemeLike, colorName: string) {
+  try {
+    return ansiColorToCss(theme.getFgAnsi(colorName));
+  } catch {
+    return "";
+  }
+}
+
 export function buildThemePayload(theme?: ThemeLike | null) {
   if (!theme) return null;
 
   const colors = {
-    accent: ansiColorToCss(theme.getFgAnsi("accent")),
-    muted: ansiColorToCss(theme.getFgAnsi("muted")),
-    dim: ansiColorToCss(theme.getFgAnsi("dim")),
-    success: ansiColorToCss(theme.getFgAnsi("success")),
-    warning: ansiColorToCss(theme.getFgAnsi("warning")),
-    danger: ansiColorToCss(theme.getFgAnsi("danger")),
-    text: ansiColorToCss(theme.getFgAnsi("text")),
-    mdCode: ansiColorToCss(theme.getFgAnsi("mdCode")),
-    mdCodeBlock: ansiColorToCss(theme.getFgAnsi("mdCodeBlock")),
-    mdCodeBlockBorder: ansiColorToCss(theme.getFgAnsi("mdCodeBlockBorder")),
+    accent: themeColorToCss(theme, "accent"),
+    muted: themeColorToCss(theme, "muted"),
+    dim: themeColorToCss(theme, "dim"),
+    success: themeColorToCss(theme, "success"),
+    warning: themeColorToCss(theme, "warning"),
+    danger: themeColorToCss(theme, "danger"),
+    text: themeColorToCss(theme, "text"),
+    mdCode: themeColorToCss(theme, "mdCode"),
+    mdCodeBlock: themeColorToCss(theme, "mdCodeBlock"),
+    mdCodeBlockBorder: themeColorToCss(theme, "mdCodeBlockBorder"),
   };
 
   if (!Object.values(colors).some(Boolean)) {

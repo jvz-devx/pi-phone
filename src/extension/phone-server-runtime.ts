@@ -337,7 +337,7 @@ export class PhoneServerRuntime {
       return this.sessionPool.buildOverallStatus();
     }
 
-    const theme = buildThemePayload(this.latestCtx?.ui.theme);
+    const theme = buildThemePayload(this.latestCtx?.ui?.theme);
 
     return {
       cwd: this.config.cwd,
@@ -839,13 +839,18 @@ export class PhoneServerRuntime {
     if (url.pathname === "/api/health") {
       const authorized = this.isApiAuthorized(req, url);
       if (authorized) this.markActivity();
+      const payload = authorized
+        ? this.buildStatus()
+        : this.buildPublicHealth();
       res.writeHead(200, {
         "Content-Type": "application/json; charset=utf-8",
         "Cache-Control": "no-store",
       });
-      res.end(JSON.stringify(authorized
-        ? this.buildStatus()
-        : this.buildPublicHealth()));
+      if (req.method === "HEAD") {
+        res.end();
+      } else {
+        res.end(JSON.stringify(payload));
+      }
       return;
     }
 
@@ -963,7 +968,7 @@ export class PhoneServerRuntime {
       send: (ws, payload) => this.send(ws, payload),
       onActivity: () => this.markActivity(),
       buildStatusMeta: () => {
-        const theme = buildThemePayload(this.latestCtx?.ui.theme);
+        const theme = buildThemePayload(this.latestCtx?.ui?.theme);
         return {
           cwd: this.config.cwd,
           hasToken: Boolean(this.config.token),
@@ -1035,8 +1040,12 @@ export class PhoneServerRuntime {
     this.server = createServer((req, res) => {
       this.handleHttp(req, res).catch((error) => {
         this.latestError = error instanceof Error ? error.message : String(error);
-        res.writeHead(500, { "Content-Type": "application/json; charset=utf-8" });
-        res.end(JSON.stringify({ error: this.latestError }));
+        if (!res.headersSent) {
+          res.writeHead(500, { "Content-Type": "application/json; charset=utf-8" });
+        }
+        if (!res.writableEnded) {
+          res.end(JSON.stringify({ error: this.latestError }));
+        }
         this.broadcastStatus();
       });
     });

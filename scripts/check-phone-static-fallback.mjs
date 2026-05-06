@@ -41,6 +41,7 @@ async function collectFileExtensions(directory) {
 
 const runtime = await readRepoFile('src/extension/phone-server-runtime.ts');
 const staticModule = await readRepoFile('src/extension/phone-static.ts');
+const themeModule = await readRepoFile('src/extension/phone-theme.ts');
 const svelteConfig = await readRepoFile('frontend/svelte.config.js');
 
 assert.match(svelteConfig, /adapter-static/, 'SvelteKit must keep using adapter-static for Pi Phone static hosting.');
@@ -61,6 +62,17 @@ assertOrdered(runtime, [
 assert.match(runtime, /this\.server\.on\("upgrade"/, 'WebSocket handling must stay on the HTTP upgrade path.');
 assert.match(runtime, /url\.pathname !== "\/ws"/, 'Only /ws should be accepted for WebSocket upgrades.');
 assert.match(runtime, /activeWss\.handleUpgrade\(req, socket, head/, 'Accepted /ws upgrades should be delegated to ws.handleUpgrade.');
+assert.match(runtime, /buildThemePayload\(this\.latestCtx\?\.ui\?\.theme\)/, 'Status health responses must tolerate contexts without a ui theme object.');
+assert.match(themeModule, /function themeColorToCss[\s\S]*try \{[\s\S]*theme\.getFgAnsi[\s\S]*catch \{[\s\S]*return "";/, 'Theme payload extraction must tolerate Pi themes without every requested color token.');
+assert.match(runtime, /if \(!res\.headersSent\) \{\s*res\.writeHead\(500,/s, 'HTTP error handling must not send duplicate response headers.');
+
+const healthRouteIndex = runtime.indexOf('if (url.pathname === "/api/health")');
+assert.notEqual(healthRouteIndex, -1, 'Expected health API route in PhoneServerRuntime.');
+const healthRouteEndIndex = runtime.indexOf('if (url.pathname === "/api/quota")', healthRouteIndex);
+const healthRouteSource = runtime.slice(healthRouteIndex, healthRouteEndIndex);
+const healthPayloadIndex = healthRouteSource.indexOf('const payload = authorized');
+const healthWriteHeadIndex = healthRouteSource.indexOf('res.writeHead(200');
+assert.ok(healthPayloadIndex !== -1 && healthWriteHeadIndex !== -1 && healthPayloadIndex < healthWriteHeadIndex, 'Health status payload should be built before response headers are sent.');
 
 const requiredExtensions = new Set([
   '.css',
