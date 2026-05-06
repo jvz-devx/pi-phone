@@ -2,6 +2,8 @@
   import { onDestroy, onMount, tick } from 'svelte';
   import ArrowDown from '@lucide/svelte/icons/arrow-down';
   import * as Conversation from '$lib/components/ai-elements/conversation/index.js';
+  import { Loader } from '$lib/components/ai-elements/loader/index.js';
+  import { Shimmer } from '$lib/components/ai-elements/shimmer/index.js';
   import { Button } from '$lib/components/ui/button/index.js';
   import { conversationItems } from '$lib/adapters/message-adapter';
   import { piPhoneState, type PhoneStateStore } from '$lib/stores/pi-phone-state';
@@ -14,6 +16,7 @@
   const STREAM_FOLLOW_MIN_HEIGHT_DELTA = 16;
   const PROGRAMMATIC_SCROLL_GUARD_MS = 700;
   const USER_SCROLL_INTENT_MS = 400;
+  const JUMP_LATEST_EVENT = 'pi-phone:jump-latest';
 
   type PendingMessageScroll = {
     force: boolean;
@@ -56,6 +59,11 @@
   let contentSignature = $derived(renderedItems.map(itemSignature).join('\n'));
   let jumpToLatestVisible = $derived(hasRenderableContent && !appState.messages.followLatest && !nearBottom);
   let bottomPadding = $derived(`calc(${Math.max(0, bottomReserve)}px + env(safe-area-inset-bottom))`);
+  let loadingConversation = $derived(
+    !hasRenderableContent &&
+      ['health-loading', 'connecting', 'reconnecting'].includes(appState.connection.connectionState),
+  );
+  let errorText = $derived(!hasRenderableContent ? appState.auth.authError || appState.connection.lastError || appState.status?.lastError || '' : '');
 
   function itemSignature(item: PhoneUiMessage) {
     const text = item.text || '';
@@ -184,6 +192,8 @@
 
   onMount(() => {
     refreshNearBottom();
+    window.addEventListener(JUMP_LATEST_EVENT, jumpToLatest);
+    return () => window.removeEventListener(JUMP_LATEST_EVENT, jumpToLatest);
   });
 
   onDestroy(() => {
@@ -191,7 +201,7 @@
   });
 </script>
 
-<Conversation.Root class={cn('phone-chat-workspace min-h-0 rounded-3xl border bg-card/80 shadow-xl', className)}>
+<Conversation.Root class={cn('phone-chat-workspace min-h-0 rounded-3xl border bg-card/80 shadow-sm', className)}>
   <Conversation.Content
     autoStick={false}
     bind:ref={scrollElement}
@@ -210,6 +220,18 @@
           <ChatMessage item={message} {stateStore} />
         {/each}
       </div>
+    {:else if loadingConversation}
+      <Conversation.EmptyState aria-live="polite">
+        <div class="flex flex-col items-center gap-4 text-center">
+          <Loader size={24} class="text-primary" aria-hidden="true" />
+          <div class="space-y-2">
+            <Shimmer as="h3" class="text-sm font-medium" content_length={24}>Loading Pi conversation…</Shimmer>
+            <p class="max-w-md text-sm leading-6 text-muted-foreground">Connecting to the Pi Phone runtime and waiting for the latest snapshot.</p>
+          </div>
+        </div>
+      </Conversation.EmptyState>
+    {:else if errorText}
+      <Conversation.EmptyState title="Unable to load conversation" description={errorText} role="alert" />
     {:else}
       <Conversation.EmptyState title={emptyTitle} description={emptyDescription} />
     {/if}
@@ -218,11 +240,12 @@
   {#if jumpToLatestVisible}
     <div class="pointer-events-none absolute inset-x-0 bottom-4 flex justify-center px-4" style:bottom={bottomPadding}>
       <Button
-        class="pointer-events-auto gap-2 rounded-full border-border/60 bg-background/90 px-4 shadow-lg backdrop-blur hover:bg-background"
+        class="pointer-events-auto gap-2 rounded-full border-border/60 bg-background/90 px-4 shadow-sm backdrop-blur hover:bg-background"
         type="button"
         variant="outline"
         size="sm"
         aria-label="Jump to latest message"
+        title="Jump to latest message (J)"
         onclick={jumpToLatest}
       >
         <ArrowDown class="size-4" aria-hidden="true" />

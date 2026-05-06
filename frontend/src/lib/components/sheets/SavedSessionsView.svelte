@@ -6,6 +6,8 @@
   import { phoneClient } from '$lib/pi-phone-transport';
   import { piPhoneState, type PhoneStateStore } from '$lib/stores/pi-phone-state';
   import type { PhoneSavedSession } from '$lib/types/pi-phone';
+  import { Loader } from '$lib/components/ai-elements/loader/index.js';
+  import { Shimmer } from '$lib/components/ai-elements/shimmer/index.js';
   import { Badge } from '$lib/components/ui/badge/index.js';
   import { Button } from '$lib/components/ui/button/index.js';
   import { cn } from '$lib/utils';
@@ -22,6 +24,7 @@
   let appState = $derived($stateStore);
   let groups = $derived(groupSavedSessions(appState.sessions.saved));
   let activeFile = $derived(appState.snapshot.state?.sessionFile || '');
+  let loading = $derived(!appState.sessions.saved.length && ['health-loading', 'connecting', 'reconnecting'].includes(appState.connection.connectionState));
 
   function refresh() {
     refreshSavedSessions({ client });
@@ -49,7 +52,7 @@
         <h2 class="text-sm font-semibold uppercase tracking-[0.18em] text-muted-foreground">Saved sessions</h2>
         <p class="mt-1 text-sm text-muted-foreground">Resume sessions for this project. Parallel children are grouped under their parent when Pi exposes that relationship.</p>
       </div>
-      <Button variant="outline" size="sm" onclick={refresh} class="gap-2">
+      <Button variant="outline" size="sm" onclick={refresh} class="gap-2" aria-label="Refresh saved sessions" title="Refresh saved sessions">
         <RotateCw class="size-3.5" aria-hidden="true" />
         Refresh
       </Button>
@@ -112,8 +115,15 @@
       </section>
     {/each}
   {:else}
-    <div class="rounded-3xl border border-dashed bg-secondary/20 p-4 text-sm leading-6 text-muted-foreground">
-      No sessions found yet for this working directory. Use Refresh after Pi has created or resumed sessions.
+    <div class="rounded-3xl border border-dashed bg-secondary/20 p-4 text-sm leading-6 text-muted-foreground" aria-live="polite">
+      {#if loading}
+        <div class="flex items-center gap-3">
+          <Loader size={18} class="text-primary" aria-hidden="true" />
+          <Shimmer content_length={26}>Loading saved sessions…</Shimmer>
+        </div>
+      {:else}
+        No sessions found yet for this working directory. Use Refresh after Pi has created or resumed sessions.
+      {/if}
     </div>
   {/if}
 </section>

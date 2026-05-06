@@ -51,7 +51,7 @@
 
 <section class={cn('grid gap-3', className)} aria-label={titles[activeMode]}>
   {#if showHeader}
-    <div class={cn('rounded-3xl border bg-card/82 shadow-xl backdrop-blur', compact ? 'p-3' : 'p-4')}>
+    <div class={cn('rounded-3xl border bg-card/82 shadow-sm backdrop-blur', compact ? 'p-3' : 'p-4')}>
       <div class="flex items-start justify-between gap-3">
         <div>
           <p class="text-xs font-semibold uppercase tracking-[0.18em] text-muted-foreground">Pi browser</p>

@@ -4,6 +4,8 @@
   import { phoneClient } from '$lib/pi-phone-transport';
   import { piPhoneState, type PhoneStateStore } from '$lib/stores/pi-phone-state';
   import type { PhoneSessionSummary } from '$lib/types/pi-phone';
+  import { Loader } from '$lib/components/ai-elements/loader/index.js';
+  import { Shimmer } from '$lib/components/ai-elements/shimmer/index.js';
   import { Badge } from '$lib/components/ui/badge/index.js';
   import { Button } from '$lib/components/ui/button/index.js';
   import { Separator } from '$lib/components/ui/separator/index.js';
@@ -23,6 +25,7 @@
   let groups = $derived(groupActiveSessions(appState));
   let selectedId = $derived(activeSessionId(appState));
   let controlsAvailable = $derived(parentCommandControlsAvailable(appState));
+  let loading = $derived(!appState.sessions.active.length && ['health-loading', 'connecting', 'reconnecting'].includes(appState.connection.connectionState));
 
   function isCurrent(session: PhoneSessionSummary) {
     return session.id === selectedId;
@@ -62,7 +65,7 @@
         <h2 class="text-sm font-semibold uppercase tracking-[0.18em] text-muted-foreground">Active sessions</h2>
         <p class="mt-1 text-sm text-muted-foreground">Switch between the parent CLI mirror and parallel phone workers.</p>
       </div>
-      <Button variant="outline" size="sm" onclick={openSaved}>Saved sessions</Button>
+      <Button variant="outline" size="sm" onclick={openSaved} aria-label="Open saved sessions">Saved sessions</Button>
     </div>
 
     {#if !controlsAvailable}
@@ -128,8 +131,15 @@
           {/each}
         </div>
       {:else}
-        <div class="rounded-2xl border border-dashed bg-secondary/25 p-3 text-xs leading-5 text-muted-foreground">
-          {group.kind === 'parent' ? 'Parent session unavailable.' : 'No parallel sessions yet. Start one with New Parallel.'}
+        <div class="rounded-2xl border border-dashed bg-secondary/25 p-3 text-xs leading-5 text-muted-foreground" aria-live="polite">
+          {#if loading}
+            <div class="flex items-center gap-2">
+              <Loader size={16} class="text-primary" aria-hidden="true" />
+              <Shimmer content_length={20}>Loading active sessions…</Shimmer>
+            </div>
+          {:else}
+            {group.kind === 'parent' ? 'Parent session unavailable.' : 'No parallel sessions yet. Start one with New Parallel.'}
+          {/if}
         </div>
       {/if}
     </section>

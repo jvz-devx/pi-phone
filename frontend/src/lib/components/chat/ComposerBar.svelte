@@ -35,6 +35,8 @@
   import AutocompleteStrip from './AutocompleteStrip.svelte';
   import ComposerMeta from './ComposerMeta.svelte';
 
+  const COMPOSER_SUBMIT_EVENT = 'pi-phone:composer-submit';
+
   interface Props {
     stateStore?: PhoneStateStore;
     client?: PhoneCommandActionClient & PhoneAutocompleteClient;
@@ -127,6 +129,12 @@
 
   function handleComposerKeydown(event: KeyboardEvent) {
     const items = appState.autocomplete.items;
+    if ((event.metaKey || event.ctrlKey) && event.key === 'Enter' && !event.isComposing) {
+      event.preventDefault();
+      void handleSubmit(false);
+      return;
+    }
+
     if (!items.length) return;
 
     if (event.key === 'ArrowDown') {
@@ -172,6 +180,11 @@
     void handleSubmit(false);
   }
 
+  function handleExternalSubmit() {
+    if (!textarea || document.activeElement !== textarea) return;
+    handlePromptSubmit();
+  }
+
   function handleSteer() {
     if (!steerVisible) return;
     void handleSubmit(true);
@@ -214,15 +227,32 @@
 
   onMount(() => {
     cleanupBeforeUnload = registerAttachmentObjectUrlCleanup(stateStore);
+    window.addEventListener(COMPOSER_SUBMIT_EVENT, handleExternalSubmit);
+  });
+
+  $effect(() => {
+    if (!textarea) return;
+    const hasSuggestions = appState.autocomplete.items.length > 0;
+    if (hasSuggestions) {
+      textarea.setAttribute('aria-controls', 'composer-suggestions');
+      const activeIndex = selectedSuggestionIndex >= 0 ? selectedSuggestionIndex : 0;
+      textarea.setAttribute('aria-activedescendant', `composer-suggestion-${activeIndex}`);
+    } else {
+      textarea.removeAttribute('aria-controls');
+      textarea.removeAttribute('aria-activedescendant');
+    }
+    textarea.setAttribute('aria-expanded', hasSuggestions ? 'true' : 'false');
+    textarea.setAttribute('aria-autocomplete', 'list');
   });
 
   onDestroy(() => {
+    window.removeEventListener(COMPOSER_SUBMIT_EVENT, handleExternalSubmit);
     cleanupBeforeUnload?.();
     clearComposerAttachments(stateStore, { text });
   });
 </script>
 
-<section class={cn('phone-composer-bar rounded-3xl border bg-card/95 p-3 shadow-2xl backdrop-blur', className)} aria-label="Message composer">
+<section class={cn('phone-composer-bar rounded-3xl border bg-card/95 p-3 shadow-md backdrop-blur', className)} aria-label="Message composer">
   <ComposerMeta stateStore={stateStore} class="mb-2 lg:hidden" />
 
   <AutocompleteStrip
@@ -233,7 +263,7 @@
 
   <AttachmentTray attachments={ordered} promptText={text} onRemove={removeAttachment} class="mb-2" />
 
-  <input bind:this={fileInput} class="hidden" type="file" accept="image/*" multiple onchange={handleFileInput} />
+  <input bind:this={fileInput} class="hidden" type="file" accept="image/*" multiple onchange={handleFileInput} aria-label="Choose image attachments" />
 
   <div onkeydowncapture={handleComposerKeydown}>
     <PromptInput.Root
@@ -258,12 +288,12 @@
       </PromptInput.Body>
       <PromptInput.Toolbar class="gap-2 border-t px-2 py-2">
         <PromptInput.Tools class="gap-2">
-          <Button type="button" variant="outline" size="sm" class="gap-2 rounded-xl" onclick={chooseImages}>
+          <Button type="button" variant="outline" size="sm" class="gap-2 rounded-xl" onclick={chooseImages} aria-label="Attach images to prompt" title="Attach images">
             <ImagePlus class="size-4" aria-hidden="true" />
             Attach
           </Button>
           {#if steerVisible}
-            <Button type="button" variant="secondary" size="sm" class="gap-2 rounded-xl" onclick={handleSteer} aria-label="Steer current response">
+            <Button type="button" variant="secondary" size="sm" class="gap-2 rounded-xl" onclick={handleSteer} aria-label="Steer current response" title="Steer current response">
               <WandSparkles class="size-4" aria-hidden="true" />
               Steer
             </Button>
@@ -271,12 +301,12 @@
         </PromptInput.Tools>
         <div class="ml-auto flex items-center gap-2">
           {#if streaming}
-            <Button type="button" variant="destructive" size="sm" class="gap-2 rounded-xl" onclick={handleAbort} aria-label="Stop current response">
+            <Button type="button" variant="destructive" size="sm" class="gap-2 rounded-xl" onclick={handleAbort} aria-label="Stop current response" title="Stop current response (.)">
               <Square class="size-3.5" aria-hidden="true" />
               Stop
             </Button>
           {/if}
-          <PromptInput.Submit status="ready" class="rounded-xl" disabled={!canSubmit || appState.composer.isSubmitting} title={streaming ? 'Queue follow-up message' : 'Send message'} />
+          <PromptInput.Submit status="ready" class="rounded-xl" disabled={!canSubmit || appState.composer.isSubmitting} title={streaming ? 'Queue follow-up message (Enter or Ctrl/⌘ Enter)' : 'Send message (Enter or Ctrl/⌘ Enter)'} aria-label={streaming ? 'Queue follow-up message' : 'Send message'} />
         </div>
       </PromptInput.Toolbar>
     </PromptInput.Root>

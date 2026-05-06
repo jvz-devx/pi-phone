@@ -69,7 +69,7 @@
         <p class="mt-1 text-sm leading-6 text-muted-foreground">{message}</p>
       {/if}
     </div>
-    <Button type="button" variant="outline" size="sm" onclick={cancel}>Cancel</Button>
+    <Button type="button" variant="outline" size="sm" onclick={cancel} aria-label="Cancel extension editor request">Cancel</Button>
   </header>
 
   <div class="flex min-h-0 flex-1 flex-col gap-3 p-3 sm:p-5">
@@ -83,12 +83,13 @@
       spellcheck="false"
       oninput={(event) => updateDraft(event.currentTarget.value)}
       onkeydown={handleKeydown}
+      aria-describedby="extension-editor-help"
     />
-    <div class="flex shrink-0 flex-col gap-2 border-t pt-3 text-xs text-muted-foreground sm:flex-row sm:items-center sm:justify-between">
+    <div id="extension-editor-help" class="flex shrink-0 flex-col gap-2 border-t pt-3 text-xs text-muted-foreground sm:flex-row sm:items-center sm:justify-between">
       <span>Draft is kept for this request until you submit or cancel. Press Ctrl/⌘ Enter to submit.</span>
       <div class="flex justify-end gap-2">
-        <Button type="button" variant="outline" onclick={cancel}>Cancel</Button>
-        <Button type="button" onclick={submit}>Submit</Button>
+        <Button type="button" variant="outline" onclick={cancel} aria-label="Cancel extension editor request">Cancel</Button>
+        <Button type="button" onclick={submit} aria-label="Submit extension editor response">Submit</Button>
       </div>
     </div>
   </div>

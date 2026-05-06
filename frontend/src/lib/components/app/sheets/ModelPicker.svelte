@@ -5,6 +5,8 @@
   import { piPhoneState, type PhoneStateStore } from '$lib/stores/pi-phone-state';
   import type { PhoneModel } from '$lib/types/pi-phone';
   import * as ModelSelector from '$lib/components/ai-elements/model-selector/index.js';
+  import { Loader } from '$lib/components/ai-elements/loader/index.js';
+  import { Shimmer } from '$lib/components/ai-elements/shimmer/index.js';
   import { Badge } from '$lib/components/ui/badge/index.js';
   import { Button } from '$lib/components/ui/button/index.js';
   import * as Card from '$lib/components/ui/card/index.js';
@@ -23,6 +25,7 @@
   let selectorValue = $state('');
   let currentModel = $derived(appState.snapshot.state?.model || appState.connection.client?.currentModel || null);
   let modelGroups = $derived(groupModels(appState.models.available));
+  let loading = $derived(!appState.models.available.length && ['health-loading', 'connecting', 'reconnecting'].includes(appState.connection.connectionState));
 
   function groupModels(models: PhoneModel[]) {
     const groups = new Map<string, PhoneModel[]>();
@@ -88,13 +91,13 @@
 
       <ModelSelector.ModelSelector bind:open={selectorOpen}>
         <ModelSelector.Trigger>
-          <Button variant="secondary" class="gap-2">
+          <Button variant="secondary" class="gap-2" aria-label="Search models" title="Search models">
             <Search class="size-4" aria-hidden="true" />
             Search models
           </Button>
         </ModelSelector.Trigger>
         <ModelSelector.Content class="max-h-[min(80dvh,40rem)] max-w-2xl overflow-hidden">
-          <ModelSelector.Input bind:value={selectorValue} placeholder="Search models…" />
+          <ModelSelector.Input bind:value={selectorValue} placeholder="Search models…" aria-label="Search models" />
           <ModelSelector.List class="max-h-[60dvh] overflow-y-auto">
             <ModelSelector.Empty>No models found.</ModelSelector.Empty>
             {#each modelGroups as [provider, models] (provider)}
@@ -126,8 +129,15 @@
   </Card.Root>
 
   {#if !appState.models.available.length}
-    <div class="rounded-2xl border border-dashed bg-secondary/20 p-4 text-sm text-muted-foreground">
-      Loading available models… Use Refresh if the list does not appear.
+    <div class="rounded-2xl border border-dashed bg-secondary/20 p-4 text-sm text-muted-foreground" aria-live="polite">
+      {#if loading}
+        <div class="flex items-center gap-3">
+          <Loader size={18} class="text-primary" aria-hidden="true" />
+          <Shimmer content_length={24}>Loading available models…</Shimmer>
+        </div>
+      {:else}
+        No model catalog is loaded yet. Use Refresh to request available models from Pi.
+      {/if}
     </div>
   {:else}
     <div class="grid gap-2">

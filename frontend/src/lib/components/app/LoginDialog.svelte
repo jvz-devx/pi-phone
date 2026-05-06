@@ -96,7 +96,7 @@
 </script>
 
 <Dialog.Root bind:open={dialogOpen}>
-  <Dialog.Content class="max-w-md gap-5 rounded-3xl border bg-card p-5 shadow-2xl sm:max-w-md" showCloseButton={canDismiss} aria-describedby="login-description">
+  <Dialog.Content class="max-w-md gap-5 rounded-3xl border bg-card p-5 shadow-md sm:max-w-md" showCloseButton={canDismiss} aria-describedby="login-description">
     <Dialog.Header>
       <div class="flex items-start gap-3">
         <span class="rounded-2xl border border-primary/25 bg-primary/10 p-2.5 text-primary" aria-hidden="true">

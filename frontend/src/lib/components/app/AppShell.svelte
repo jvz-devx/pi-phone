@@ -1,11 +1,12 @@
 <script lang="ts">
-  import { onMount } from 'svelte';
+  import { onMount, tick } from 'svelte';
   import PanelRightClose from '@lucide/svelte/icons/panel-right-close';
   import { Button } from '$lib/components/ui/button/index.js';
   import { phoneClient } from '$lib/pi-phone-transport';
-  import type { PhoneSessionActionClient } from '$lib/actions/phone-commands';
+  import { abortGeneration, openPhoneSheet, type PhoneSessionActionClient } from '$lib/actions/phone-commands';
   import type { PhoneAutocompleteClient } from '$lib/actions/autocomplete';
   import { piPhoneState, type PhoneStateStore } from '$lib/stores/pi-phone-state';
+  import { applyPiThemePayload } from '$lib/theme';
   import type { PhoneSheetMode } from '$lib/types/pi-phone';
   import { cn } from '$lib/utils';
   import ChatWorkspace from '$lib/components/chat/ChatWorkspace.svelte';
@@ -18,6 +19,7 @@
 
   const LEFT_PREF_KEY = 'pi-phone-shell-left-open';
   const RIGHT_PREF_KEY = 'pi-phone-shell-right-open';
+  const JUMP_LATEST_EVENT = 'pi-phone:jump-latest';
 
   type MobilePanel = 'inspector' | 'actions' | PhoneSheetMode | null;
 
@@ -37,9 +39,15 @@
   let mounted = $state(false);
   let appState = $derived($stateStore);
   let activeSession = $derived(appState.sessions.active.find((session) => session.id === appState.sessions.activeSessionId) || null);
+  let themePayload = $derived(appState.status?.theme || appState.auth.health?.theme || null);
   let desktopColumns = $derived(`${leftOpen ? 'minmax(15rem, 19rem)' : '0rem'} minmax(0, 1fr) ${rightOpen ? 'minmax(18rem, 22rem)' : '0rem'}`);
   let activePanel = $derived(appState.sheets.open ? appState.sheets.mode : mobilePanel);
   let lastQuotaRequestKey = $state('');
+  let mobileSheetRef: HTMLElement | null = $state(null);
+  let mobileCloseButton: HTMLButtonElement | null = $state(null);
+  let previousActivePanel: MobilePanel = $state(null);
+  let lastFocusedBeforeMobilePanel: HTMLElement | null = null;
+  let streaming = $derived(Boolean(appState.status?.isStreaming || appState.snapshot.state?.isStreaming));
 
   function readBooleanPreference(key: string, fallback = false) {
     if (typeof localStorage === 'undefined') return fallback;
@@ -84,6 +92,7 @@
   function closeMobilePanel() {
     mobilePanel = null;
     if (appState.sheets.open) stateStore.setSheetOpen(false);
+    void tick().then(() => lastFocusedBeforeMobilePanel?.focus?.());
   }
 
   function openActions() {
@@ -95,6 +104,124 @@
     }
 
     mobilePanel = 'actions';
+  }
+
+  function openCommandsFromShortcut() {
+    if (!isDesktopLayout()) return;
+    openPhoneSheet('commands', { store: stateStore, client });
+    setRightOpen(true);
+  }
+
+  function openSessionsFromShortcut() {
+    if (!isDesktopLayout()) return;
+    setLeftOpen(true);
+  }
+
+  function jumpLatestFromShortcut() {
+    if (typeof window === 'undefined') return;
+    window.dispatchEvent(new CustomEvent(JUMP_LATEST_EVENT));
+  }
+
+  function stopFromShortcut() {
+    if (!streaming) return;
+    abortGeneration({ client, store: stateStore });
+  }
+
+  function isEditableTarget(target: EventTarget | null) {
+    if (!(target instanceof HTMLElement)) return false;
+    if (target.isContentEditable) return true;
+    const tag = target.tagName.toLowerCase();
+    if (tag === 'textarea' || tag === 'select') return true;
+    if (tag === 'input') {
+      const type = (target as HTMLInputElement).type;
+      return !['button', 'checkbox', 'color', 'file', 'hidden', 'image', 'radio', 'range', 'reset', 'submit'].includes(type);
+    }
+    return Boolean(target.closest('[contenteditable="true"], [role="textbox"]'));
+  }
+
+  function hasBlockingDialog() {
+    return Boolean(appState.auth.loginOpen || appState.uiRequests.pending || activePanel);
+  }
+
+  function focusableMobileSheetElements() {
+    if (!mobileSheetRef) return [];
+    return [...mobileSheetRef.querySelectorAll<HTMLElement>('button:not([disabled]), [href], input:not([disabled]), select:not([disabled]), textarea:not([disabled]), [tabindex]:not([tabindex="-1"])')].filter(
+      (element) => !element.hasAttribute('disabled') && element.getAttribute('aria-hidden') !== 'true' && element.offsetParent !== null,
+    );
+  }
+
+  function handleMobilePanelKeydown(event: KeyboardEvent) {
+    if (!activePanel) return;
+    if (event.key === 'Escape') {
+      event.preventDefault();
+      closeMobilePanel();
+      return;
+    }
+
+    if (event.key !== 'Tab') return;
+    const focusable = focusableMobileSheetElements();
+    if (!focusable.length) {
+      event.preventDefault();
+      mobileSheetRef?.focus();
+      return;
+    }
+
+    const first = focusable[0];
+    const last = focusable[focusable.length - 1];
+    if (event.shiftKey && document.activeElement === first) {
+      event.preventDefault();
+      last?.focus();
+    } else if (!event.shiftKey && document.activeElement === last) {
+      event.preventDefault();
+      first?.focus();
+    }
+  }
+
+  function handleGlobalKeydown(event: KeyboardEvent) {
+    if (event.defaultPrevented || event.repeat || event.isComposing) return;
+    if (activePanel && event.key === 'Escape') {
+      event.preventDefault();
+      closeMobilePanel();
+      return;
+    }
+    if (!isDesktopLayout()) return;
+    if (isEditableTarget(event.target) || hasBlockingDialog()) return;
+
+    const key = event.key.toLowerCase();
+    if (event.altKey || event.ctrlKey || event.metaKey) return;
+
+    if (key === 'c') {
+      event.preventDefault();
+      openCommandsFromShortcut();
+      return;
+    }
+
+    if (key === 's') {
+      event.preventDefault();
+      openSessionsFromShortcut();
+      return;
+    }
+
+    if (key === 'j') {
+      event.preventDefault();
+      jumpLatestFromShortcut();
+      return;
+    }
+
+    if (key === '.' && streaming) {
+      event.preventDefault();
+      stopFromShortcut();
+    }
+  }
+
+  function updateViewportVars() {
+    if (typeof window === 'undefined') return;
+    const root = document.documentElement;
+    const viewport = window.visualViewport;
+    const visualHeight = viewport?.height || window.innerHeight;
+    const keyboardInset = viewport ? Math.max(0, window.innerHeight - viewport.height - viewport.offsetTop) : 0;
+    root.style.setProperty('--pi-visual-viewport-height', `${Math.round(visualHeight)}px`);
+    root.style.setProperty('--pi-keyboard-inset', `${Math.round(keyboardInset)}px`);
   }
 
   function requestRefresh(forceQuota = false) {
@@ -117,7 +244,23 @@
   }
 
   $effect(() => {
+    applyPiThemePayload(themePayload);
+  });
+
+  $effect(() => {
     if (appState.sheets.open && isDesktopLayout() && !rightOpen) setRightOpen(true);
+  });
+
+  $effect(() => {
+    const panel = activePanel;
+    if (panel && !previousActivePanel) {
+      lastFocusedBeforeMobilePanel = document.activeElement instanceof HTMLElement ? document.activeElement : null;
+      void tick().then(() => {
+        mobileCloseButton?.focus?.();
+        mobileSheetRef?.scrollTo?.({ top: 0 });
+      });
+    }
+    previousActivePanel = panel;
   });
 
   $effect(() => {
@@ -140,6 +283,21 @@
     leftOpen = readBooleanPreference(LEFT_PREF_KEY, false);
     rightOpen = readBooleanPreference(RIGHT_PREF_KEY, false);
     mounted = true;
+
+    updateViewportVars();
+    window.addEventListener('keydown', handleGlobalKeydown);
+    window.addEventListener('resize', updateViewportVars);
+    window.visualViewport?.addEventListener('resize', updateViewportVars);
+    window.visualViewport?.addEventListener('scroll', updateViewportVars);
+
+    return () => {
+      window.removeEventListener('keydown', handleGlobalKeydown);
+      window.removeEventListener('resize', updateViewportVars);
+      window.visualViewport?.removeEventListener('resize', updateViewportVars);
+      window.visualViewport?.removeEventListener('scroll', updateViewportVars);
+      document.documentElement.style.removeProperty('--pi-visual-viewport-height');
+      document.documentElement.style.removeProperty('--pi-keyboard-inset');
+    };
   });
 </script>
 
@@ -155,7 +313,7 @@
     onOpenLogin={onOpenLogin}
   />
 
-  <main class="mx-auto grid w-full max-w-[1440px] min-h-0 flex-1 gap-3 p-2 sm:p-3 lg:grid lg:p-4" style:grid-template-columns={desktopColumns}>
+  <main class="phone-shell-main mx-auto grid w-full max-w-[1440px] min-h-0 flex-1 gap-3 p-2 sm:p-3 lg:grid lg:p-4" style:grid-template-columns={desktopColumns}>
     <aside
       class={cn(
         'hidden min-h-0 overflow-hidden transition-[opacity,transform] duration-200 lg:flex',
@@ -183,10 +341,10 @@
         rightOpen ? 'opacity-100' : 'pointer-events-none translate-x-2 opacity-0',
       )}
       aria-hidden={!rightOpen}
-      aria-label="Inspector column"
+      aria-label="Inspector panel"
     >
       <div class="flex h-full min-h-0 flex-col gap-3">
-        <div class="flex items-center justify-between rounded-3xl border bg-card/82 px-4 py-3 shadow-xl backdrop-blur">
+        <div class="flex items-center justify-between rounded-3xl border bg-card/82 px-4 py-3 shadow-sm backdrop-blur">
           <div>
             <p class="text-xs font-semibold uppercase tracking-[0.18em] text-muted-foreground">{appState.sheets.open ? 'Pi browser' : 'Inspector'}</p>
             <h2 class="text-base font-semibold">{appState.sheets.open ? drawerTitle(appState.sheets.mode) : 'Context and details'}</h2>
@@ -207,25 +365,32 @@
   <ExtensionUiDialog stateStore={stateStore} {client} />
 
   {#if activePanel}
-    <div class="fixed inset-0 z-40 bg-background/70 backdrop-blur-sm lg:hidden" role="presentation" onclick={(event) => event.currentTarget === event.target && closeMobilePanel()}>
-      <section class="absolute inset-x-0 bottom-0 max-h-[86dvh] rounded-t-3xl border bg-card p-3 shadow-2xl" aria-label={drawerTitle(activePanel)}>
+    <div class="fixed inset-0 z-40 bg-background/70 backdrop-blur-sm lg:hidden" role="presentation" onclick={(event) => event.currentTarget === event.target && closeMobilePanel()} onkeydown={handleMobilePanelKeydown}>
+      <div
+        bind:this={mobileSheetRef}
+        class="phone-mobile-sheet absolute inset-x-0 bottom-0 max-h-[86dvh] rounded-t-3xl border bg-card p-3 shadow-md"
+        role="dialog"
+        aria-modal="true"
+        aria-labelledby="mobile-sheet-title"
+        tabindex="-1"
+      >
         <div class="mx-auto mb-3 h-1.5 w-12 rounded-full bg-muted" aria-hidden="true"></div>
         <div class="flex items-center justify-between gap-2 border-b pb-3">
           <div>
             <p class="text-xs font-semibold uppercase tracking-[0.18em] text-muted-foreground">Pi control center</p>
-            <h2 class="text-lg font-semibold">{drawerTitle(activePanel)}</h2>
+            <h2 id="mobile-sheet-title" class="text-lg font-semibold">{drawerTitle(activePanel)}</h2>
           </div>
-          <Button type="button" variant="outline" size="sm" onclick={closeMobilePanel}>Close</Button>
+          <Button bind:ref={mobileCloseButton} type="button" variant="outline" size="sm" onclick={closeMobilePanel} aria-label={`Close ${drawerTitle(activePanel)} panel`}>Close</Button>
         </div>
 
-        <div class="max-h-[68dvh] overflow-y-auto pt-3">
+        <div class="phone-mobile-sheet-body max-h-[68dvh] overflow-y-auto pt-3">
           {#if activePanel === 'inspector'}
             <InspectorPanel stateStore={stateStore} {client} class="border-0 bg-transparent p-0 shadow-none" />
           {:else}
             <SheetBrowser stateStore={stateStore} {client} mode={activePanel} showHeader={false} compact />
           {/if}
         </div>
-      </section>
+      </div>
     </div>
   {/if}
 </div>

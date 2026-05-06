@@ -13,6 +13,7 @@
   import { phoneClient } from '$lib/pi-phone-transport';
   import { piPhoneState, type PhoneStateStore } from '$lib/stores/pi-phone-state';
   import type { PhoneStats } from '$lib/types/pi-phone';
+  import { Shimmer } from '$lib/components/ai-elements/shimmer/index.js';
   import { Badge } from '$lib/components/ui/badge/index.js';
   import { Button } from '$lib/components/ui/button/index.js';
   import * as Card from '$lib/components/ui/card/index.js';
@@ -105,7 +106,7 @@
             <Card.Title class="text-sm">Session stats</Card.Title>
             <Card.Description>Refresh to update token usage and cost.</Card.Description>
           </div>
-          <Button variant="ghost" size="xs" onclick={() => runAction('stats')}>Refresh</Button>
+          <Button variant="ghost" size="xs" onclick={() => runAction('stats')} aria-label="Refresh session stats">Refresh</Button>
         </div>
       </Card.Header>
       <Card.Content class={cn(compact && 'p-3 pt-0')}>
@@ -119,8 +120,8 @@
             {/each}
           </div>
         {:else}
-          <div class="rounded-2xl border border-dashed bg-background/40 p-3 text-xs text-muted-foreground">
-            Session stats will appear here after Refresh Stats.
+          <div class="rounded-2xl border border-dashed bg-background/40 p-3 text-xs text-muted-foreground" aria-live="polite">
+            <Shimmer content_length={32}>Session stats will appear here after Refresh Stats.</Shimmer>
           </div>
         {/if}
       </Card.Content>
@@ -141,6 +142,7 @@
           variant={action.primary ? 'secondary' : 'outline'}
           class="h-auto justify-start gap-3 rounded-2xl px-3 py-3 text-left"
           onclick={() => runAction(action.id)}
+          aria-label={`${action.label}: ${action.description}`}
         >
           <Icon class="size-4 shrink-0 text-muted-foreground" aria-hidden="true" />
           <span class="min-w-0">

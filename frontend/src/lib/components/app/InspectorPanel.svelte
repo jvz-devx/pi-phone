@@ -4,6 +4,8 @@
   import { phoneClient } from '$lib/pi-phone-transport';
   import { piPhoneState, type PhoneAppState, type PhoneStateStore } from '$lib/stores/pi-phone-state';
   import type { PhoneSessionSummary, PhoneUiToolMessage } from '$lib/types/pi-phone';
+  import { Loader } from '$lib/components/ai-elements/loader/index.js';
+  import { Shimmer } from '$lib/components/ai-elements/shimmer/index.js';
   import { Badge } from '$lib/components/ui/badge/index.js';
   import { Separator } from '$lib/components/ui/separator/index.js';
   import ComposerMeta from '$lib/components/chat/ComposerMeta.svelte';
@@ -24,6 +26,7 @@
   let selectedTool = $derived(findSelectedTool(appState));
   let selectedToolPreview = $derived(selectedTool ? buildToolPreview(selectedTool) : null);
   let cwd = $derived(appState.status?.cwd || appState.auth.health?.cwd || '');
+  let loadingState = $derived(['health-loading', 'connecting', 'reconnecting'].includes(appState.connection.connectionState));
 
   function findSelectedSession(state: PhoneAppState): PhoneSessionSummary | null {
     const id = state.sessions.activeSessionId || state.snapshot.workerId || state.status?.sessionWorkerId || '';
@@ -60,7 +63,7 @@
 
 </script>
 
-<aside class={cn('rounded-3xl border bg-card/80 shadow-xl', compact ? 'p-3' : 'p-4', className)} aria-label="Inspector panel">
+<aside class={cn('rounded-3xl border bg-card/80 shadow-sm', compact ? 'p-3' : 'p-4', className)} aria-label="Inspector panel">
   <div class="space-y-5">
     <section>
       <div class="flex items-start justify-between gap-3">
@@ -117,7 +120,16 @@
           </dl>
         </div>
       {:else}
-        <div class="mt-3 rounded-2xl border border-dashed bg-secondary/20 p-3 text-xs text-muted-foreground">No active session catalog yet.</div>
+        <div class="mt-3 rounded-2xl border border-dashed bg-secondary/20 p-3 text-xs text-muted-foreground" aria-live="polite">
+          {#if loadingState}
+            <div class="flex items-center gap-2">
+              <Loader size={16} class="text-primary" aria-hidden="true" />
+              <Shimmer content_length={22}>Loading session catalog…</Shimmer>
+            </div>
+          {:else}
+            No active session catalog yet.
+          {/if}
+        </div>
       {/if}
     </section>
 
@@ -148,7 +160,13 @@
           {/if}
         </div>
       {:else}
-        <div class="mt-3 rounded-2xl border border-dashed bg-secondary/20 p-3 text-xs text-muted-foreground">Select a tool card to pin details here.</div>
+        <div class="mt-3 rounded-2xl border border-dashed bg-secondary/20 p-3 text-xs text-muted-foreground" aria-live="polite">
+          {#if loadingState}
+            <Shimmer content_length={28}>Tool details will appear after activity starts.</Shimmer>
+          {:else}
+            Select a tool card to pin details here.
+          {/if}
+        </div>
       {/if}
     </section>
   </div>

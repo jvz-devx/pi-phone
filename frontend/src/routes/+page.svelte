@@ -77,6 +77,20 @@
       sessionCount: 1,
       controlOwner: 'phone',
       commandContextAvailable: true,
+      theme: {
+        name: 'fixture-neutral-pi',
+        colors: {
+          accent: '#8bd3ff',
+          muted: '#a3adba',
+          dim: '#7b8492',
+          success: '#91e7b6',
+          warning: '#f8d06b',
+          danger: '#ff8f8f',
+          mdCode: '#8bd3ff',
+          mdCodeBlock: '#eef4fb',
+          mdCodeBlockBorder: '#3b4652',
+        },
+      },
     };
 
     const status: PhoneStatus = {

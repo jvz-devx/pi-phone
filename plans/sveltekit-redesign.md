@@ -198,12 +198,12 @@ The SvelteKit frontend must preserve:
 
 ### Phase 7 — Theme, polish, accessibility
 
-- [ ] Convert current Pi theme payload variables into shadcn CSS tokens where possible.
-- [ ] Implement neutral dark shadcn visual style: quieter borders, cleaner cards, less glow, larger touch targets, consistent spacing.
-- [ ] Add desktop keyboard shortcuts for actions where safe: send, stop, open commands, open sessions, jump latest.
-- [ ] Ensure mobile safe-area support, keyboard viewport handling, bottom composer spacing, and one-handed reach.
-- [ ] Add accessible labels and focus management for sheets/dialogs/autocomplete/composer/tool panels.
-- [ ] Tune empty/loading/error states with `Loader` and `Shimmer`.
+- [x] Convert current Pi theme payload variables into shadcn CSS tokens where possible.
+- [x] Implement neutral dark shadcn visual style: quieter borders, cleaner cards, less glow, larger touch targets, consistent spacing.
+- [x] Add desktop keyboard shortcuts for actions where safe: send, stop, open commands, open sessions, jump latest.
+- [x] Ensure mobile safe-area support, keyboard viewport handling, bottom composer spacing, and one-handed reach.
+- [x] Add accessible labels and focus management for sheets/dialogs/autocomplete/composer/tool panels.
+- [x] Tune empty/loading/error states with `Loader` and `Shimmer`.
 
 ### Phase 8 — Build integration and cutover
 

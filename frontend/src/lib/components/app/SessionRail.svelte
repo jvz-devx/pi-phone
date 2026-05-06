@@ -63,7 +63,7 @@
   }
 </script>
 
-<aside class={cn('flex h-full min-h-0 flex-col rounded-3xl border bg-card/80 shadow-xl', compact ? 'p-3' : 'p-4', className)} aria-label="Session rail">
+<aside class={cn('flex h-full min-h-0 flex-col rounded-3xl border bg-card/80 shadow-sm', compact ? 'p-3' : 'p-4', className)} aria-label="Session rail">
   <div class="flex items-start justify-between gap-3">
     <div class="min-w-0">
       <h2 class="text-sm font-semibold uppercase tracking-[0.18em] text-muted-foreground">Sessions</h2>

@@ -3,32 +3,36 @@ type ThemeLike = {
   getFgAnsi: (...args: any[]) => string | undefined;
 };
 
+const ANSI16_COLORS = [
+  "#000000",
+  "#800000",
+  "#008000",
+  "#808000",
+  "#000080",
+  "#800080",
+  "#008080",
+  "#c0c0c0",
+  "#808080",
+  "#ff0000",
+  "#00ff00",
+  "#ffff00",
+  "#0000ff",
+  "#ff00ff",
+  "#00ffff",
+  "#ffffff",
+];
+
+function clampColorChannel(value: number) {
+  return Math.max(0, Math.min(255, Math.round(value)));
+}
+
 function rgbToHex(r: number, g: number, b: number) {
-  return `#${[r, g, b].map((value) => value.toString(16).padStart(2, "0")).join("")}`;
+  return `#${[r, g, b].map((value) => clampColorChannel(value).toString(16).padStart(2, "0")).join("")}`;
 }
 
 function xterm256ToHex(index: number) {
-  const ansi16 = [
-    "#000000",
-    "#800000",
-    "#008000",
-    "#808000",
-    "#000080",
-    "#800080",
-    "#008080",
-    "#c0c0c0",
-    "#808080",
-    "#ff0000",
-    "#00ff00",
-    "#ffff00",
-    "#0000ff",
-    "#ff00ff",
-    "#00ffff",
-    "#ffffff",
-  ];
-
-  if (index >= 0 && index < ansi16.length) {
-    return ansi16[index];
+  if (index >= 0 && index < ANSI16_COLORS.length) {
+    return ANSI16_COLORS[index];
   }
 
   if (index >= 16 && index <= 231) {
@@ -61,6 +65,12 @@ function ansiColorToCss(value: string | undefined) {
     return xterm256ToHex(Number(color256Match[1]));
   }
 
+  const sgrForegroundMatch = /\x1b\[(3[0-7]|9[0-7])m/.exec(value);
+  if (sgrForegroundMatch) {
+    const code = Number(sgrForegroundMatch[1]);
+    return ANSI16_COLORS[code >= 90 ? code - 82 : code - 30] || "";
+  }
+
   return "";
 }
 
@@ -69,6 +79,12 @@ export function buildThemePayload(theme?: ThemeLike | null) {
 
   const colors = {
     accent: ansiColorToCss(theme.getFgAnsi("accent")),
+    muted: ansiColorToCss(theme.getFgAnsi("muted")),
+    dim: ansiColorToCss(theme.getFgAnsi("dim")),
+    success: ansiColorToCss(theme.getFgAnsi("success")),
+    warning: ansiColorToCss(theme.getFgAnsi("warning")),
+    danger: ansiColorToCss(theme.getFgAnsi("danger")),
+    text: ansiColorToCss(theme.getFgAnsi("text")),
     mdCode: ansiColorToCss(theme.getFgAnsi("mdCode")),
     mdCodeBlock: ansiColorToCss(theme.getFgAnsi("mdCodeBlock")),
     mdCodeBlockBorder: ansiColorToCss(theme.getFgAnsi("mdCodeBlockBorder")),

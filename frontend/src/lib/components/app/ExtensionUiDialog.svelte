@@ -139,13 +139,13 @@
         <ExtensionEditorRequest {request} {stateStore} {client} />
       </Dialog.Content>
     {:else}
-      <Dialog.Content class="max-w-[calc(100%-1.5rem)] rounded-2xl p-0 sm:max-w-lg" showCloseButton={false} aria-label={title}>
-        <div class="rounded-2xl border bg-card text-card-foreground shadow-2xl">
+      <Dialog.Content class="max-w-[calc(100%-1.5rem)] rounded-2xl p-0 sm:max-w-lg" showCloseButton={false} aria-label={title} aria-describedby="extension-request-description">
+        <div class="rounded-2xl border bg-card text-card-foreground shadow-md">
           <Dialog.Header class="border-b px-5 py-4">
             <p class="text-xs font-semibold uppercase tracking-[0.18em] text-muted-foreground">Extension request</p>
             <Dialog.Title class="mt-1 text-xl font-semibold">{title}</Dialog.Title>
             {#if message}
-              <Dialog.Description class="mt-2 text-sm leading-6 text-muted-foreground">{message}</Dialog.Description>
+              <Dialog.Description id="extension-request-description" class="mt-2 text-sm leading-6 text-muted-foreground">{message}</Dialog.Description>
             {/if}
             {#if request.sessionWorkerId}
               <p class="mt-2 break-all font-mono text-[0.7rem] text-muted-foreground">Session {request.sessionWorkerId}</p>
@@ -160,8 +160,8 @@
                   <p class="text-sm leading-6 text-muted-foreground">{message}</p>
                 </ConfirmationRequest>
                 <ConfirmationActions>
-                  <ConfirmationAction variant="outline" onclick={() => submitConfirm(false)}>No</ConfirmationAction>
-                  <ConfirmationAction onclick={() => submitConfirm(true)}>Yes</ConfirmationAction>
+                  <ConfirmationAction variant="outline" onclick={() => submitConfirm(false)} aria-label="Reject extension confirmation">No</ConfirmationAction>
+                  <ConfirmationAction onclick={() => submitConfirm(true)} aria-label="Accept extension confirmation">Yes</ConfirmationAction>
                 </ConfirmationActions>
               </Confirmation>
             </div>
@@ -175,6 +175,7 @@
                   class="h-11 w-full rounded-xl border bg-background px-3 text-sm outline-none ring-ring transition focus:ring-2"
                   value={selectedValue}
                   onchange={handleSelectChange}
+                  aria-label="Extension request options"
                 >
                   {#each options as option}
                     <option value={option}>{option}</option>
@@ -182,15 +183,15 @@
                 </select>
                 <div class="grid gap-2 sm:grid-cols-2">
                   {#each options as option}
-                    <Button type="button" variant="secondary" class="justify-start" onclick={() => submitSelect(option)}>{option}</Button>
+                    <Button type="button" variant="secondary" class="justify-start" onclick={() => submitSelect(option)} aria-label={`Choose ${option}`}>{option}</Button>
                   {/each}
                 </div>
               {:else}
                 <p class="rounded-xl border border-destructive/30 bg-destructive/10 p-3 text-sm text-destructive">This select request did not include any options.</p>
               {/if}
               <div class="flex justify-end gap-2 border-t pt-4">
-                <Button type="button" variant="outline" onclick={cancelRequest}>Cancel</Button>
-                <Button type="submit" disabled={!selectedValue}>Submit</Button>
+                <Button type="button" variant="outline" onclick={cancelRequest} aria-label="Cancel extension select request">Cancel</Button>
+                <Button type="submit" disabled={!selectedValue} aria-label="Submit selected extension option">Submit</Button>
               </div>
             </form>
           {:else if request.method === 'input'}
@@ -203,11 +204,12 @@
                 class="h-11 rounded-xl"
                 {placeholder}
                 oninput={handleInput}
+                aria-label="Extension request response"
               />
               <p class="text-xs text-muted-foreground">Draft is kept for this request until you submit or cancel.</p>
               <div class="flex justify-end gap-2 border-t pt-4">
-                <Button type="button" variant="outline" onclick={cancelRequest}>Cancel</Button>
-                <Button type="submit">Submit</Button>
+                <Button type="button" variant="outline" onclick={cancelRequest} aria-label="Cancel extension input request">Cancel</Button>
+                <Button type="submit" aria-label="Submit extension input response">Submit</Button>
               </div>
             </form>
           {/if}

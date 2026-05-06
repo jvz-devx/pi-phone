@@ -12,6 +12,12 @@ export type PhoneThemePayload = {
   name: string;
   colors: {
     accent?: string;
+    muted?: string;
+    dim?: string;
+    success?: string;
+    warning?: string;
+    danger?: string;
+    text?: string;
     mdCode?: string;
     mdCodeBlock?: string;
     mdCodeBlockBorder?: string;

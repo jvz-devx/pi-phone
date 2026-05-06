@@ -1,4 +1,5 @@
 <script lang="ts">
+  import { onMount, tick } from 'svelte';
   import Play from '@lucide/svelte/icons/play';
   import Plus from '@lucide/svelte/icons/plus';
   import {
@@ -12,6 +13,8 @@
   import { phoneClient } from '$lib/pi-phone-transport';
   import { piPhoneState, type PhoneStateStore } from '$lib/stores/pi-phone-state';
   import type { PhoneCommand } from '$lib/types/pi-phone';
+  import { Loader } from '$lib/components/ai-elements/loader/index.js';
+  import { Shimmer } from '$lib/components/ai-elements/shimmer/index.js';
   import { Badge } from '$lib/components/ui/badge/index.js';
   import { Button } from '$lib/components/ui/button/index.js';
   import * as Card from '$lib/components/ui/card/index.js';
@@ -32,6 +35,8 @@
   let categories = $derived([...groups.keys()]);
   let activeCategory = $derived(categories.includes(appState.sheets.commandCategory) ? appState.sheets.commandCategory : categories[0] || '');
   let activeCommands = $derived(filterCommands(groups.get(activeCategory) || [], filter));
+  let filterRef = $state<HTMLInputElement | null>(null);
+  let loading = $derived(!appState.commands.available.length && ['health-loading', 'connecting', 'reconnecting'].includes(appState.connection.connectionState));
 
   function filterCommands(commands: PhoneCommand[], query: string) {
     const clean = query.trim().toLowerCase();
@@ -107,6 +112,10 @@
     if (command.source === 'local') runLocalCommand(command);
     else insertCommand(command);
   }
+
+  onMount(() => {
+    void tick().then(() => filterRef?.focus());
+  });
 </script>
 
 <section class={cn('grid gap-4', className)} aria-label="Command browser">
@@ -121,12 +130,14 @@
       </div>
     </Card.Header>
     <Card.Content class="grid gap-3">
-      <Input bind:value={filter} placeholder="Filter commands…" aria-label="Filter commands" />
-      <div class="flex gap-2 overflow-x-auto pb-1" aria-label="Command categories">
+      <Input bind:ref={filterRef} bind:value={filter} placeholder="Filter commands…" aria-label="Filter commands" />
+      <div class="flex gap-2 overflow-x-auto pb-1" role="tablist" aria-label="Command categories">
         {#each categories as category (category)}
           <Button
             variant={category === activeCategory ? 'secondary' : 'outline'}
             size="sm"
+            role="tab"
+            aria-selected={category === activeCategory}
             aria-pressed={category === activeCategory}
             onclick={() => setCategory(category)}
           >
@@ -139,8 +150,15 @@
   </Card.Root>
 
   {#if !categories.length}
-    <div class="rounded-2xl border border-dashed bg-secondary/20 p-4 text-sm text-muted-foreground">
-      No commands are available yet. Refresh Pi state to load extension commands, skills, and prompts.
+    <div class="rounded-2xl border border-dashed bg-secondary/20 p-4 text-sm text-muted-foreground" aria-live="polite">
+      {#if loading}
+        <div class="flex items-center gap-3">
+          <Loader size={18} class="text-primary" aria-hidden="true" />
+          <Shimmer content_length={28}>Loading command catalog…</Shimmer>
+        </div>
+      {:else}
+        No commands are available yet. Refresh Pi state to load extension commands, skills, and prompts.
+      {/if}
     </div>
   {:else}
     <div class="grid gap-2">

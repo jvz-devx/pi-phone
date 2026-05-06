@@ -7,6 +7,8 @@
   import { phoneClient } from '$lib/pi-phone-transport';
   import { piPhoneState, type PhoneStateStore } from '$lib/stores/pi-phone-state';
   import type { TreeListNode } from '$lib/adapters/sheet-adapter';
+  import { Loader } from '$lib/components/ai-elements/loader/index.js';
+  import { Shimmer } from '$lib/components/ai-elements/shimmer/index.js';
   import { Badge } from '$lib/components/ui/badge/index.js';
   import { Button } from '$lib/components/ui/button/index.js';
   import { cn } from '$lib/utils';
@@ -23,6 +25,7 @@
   let appState = $derived($stateStore);
   let tree = $derived(appState.tree);
   let nodes = $derived(mapTreeNodes(tree));
+  let loading = $derived(!tree && ['health-loading', 'connecting', 'reconnecting'].includes(appState.connection.connectionState));
 
   function refresh() {
     refreshSessionTree({ client });
@@ -55,7 +58,7 @@
         <h2 class="text-sm font-semibold uppercase tracking-[0.18em] text-muted-foreground">Session tree</h2>
         <p class="mt-1 text-sm text-muted-foreground">Open any branch path as a session. User turns can also be forked when Pi exposes fork controls.</p>
       </div>
-      <Button variant="outline" size="sm" onclick={refresh} class="gap-2">
+      <Button variant="outline" size="sm" onclick={refresh} class="gap-2" aria-label="Refresh session tree" title="Refresh session tree">
         <RotateCw class="size-3.5" aria-hidden="true" />
         Refresh
       </Button>
@@ -146,8 +149,15 @@
   {:else if tree}
     <div class="rounded-3xl border border-dashed bg-secondary/20 p-4 text-sm text-muted-foreground">This session tree has no nodes yet.</div>
   {:else}
-    <div class="rounded-3xl border border-dashed bg-secondary/20 p-4 text-sm leading-6 text-muted-foreground">
-      Loading tree… If it does not appear, use Refresh after a session file is available.
+    <div class="rounded-3xl border border-dashed bg-secondary/20 p-4 text-sm leading-6 text-muted-foreground" aria-live="polite">
+      {#if loading}
+        <div class="flex items-center gap-3">
+          <Loader size={18} class="text-primary" aria-hidden="true" />
+          <Shimmer content_length={20}>Loading session tree…</Shimmer>
+        </div>
+      {:else}
+        No session tree is loaded yet. Use Refresh after a session file is available.
+      {/if}
     </div>
   {/if}
 </section>

@@ -56,6 +56,7 @@
         variant={selected ? 'secondary' : 'outline'}
         class={cn('h-auto justify-start rounded-2xl px-3 py-3 text-left', selected && 'border-primary/40 bg-primary/10')}
         aria-current={selected ? 'true' : undefined}
+        aria-label={`Select ${level} thinking level${selected ? ', current' : ''}`}
         onclick={() => selectLevel(level)}
       >
         <Brain class="size-4 shrink-0 text-muted-foreground" aria-hidden="true" />

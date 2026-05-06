@@ -49,7 +49,7 @@
     {#each appState.feedback.toasts as toast (toast.id)}
       <div
         class={cn(
-          'pointer-events-auto flex items-start gap-3 rounded-2xl border bg-popover/95 p-3 text-sm text-popover-foreground shadow-xl backdrop-blur',
+          'pointer-events-auto flex items-start gap-3 rounded-2xl border bg-popover/95 p-3 text-sm text-popover-foreground shadow-md backdrop-blur',
           toast.kind === 'error'
             ? 'border-destructive/40 text-destructive'
             : toast.kind === 'warning'

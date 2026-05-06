@@ -101,6 +101,8 @@
   function selectTool() {
     stateStore.setSelectedToolId(item.id);
   }
+
+  let toolPanelLabel = $derived(`${preview.toolName} tool call, ${preview.statusLabel}`);
 </script>
 
 <AiTool.Tool
@@ -108,6 +110,8 @@
   class={cn('phone-tool-card mb-0 overflow-hidden border-border/65 bg-card/85 shadow-sm', className)}
   data-tool-id={item.id}
   data-tool-status={preview.status}
+  role="region"
+  aria-label={toolPanelLabel}
 >
   <AiTool.ToolHeader
     type={preview.toolName}
@@ -115,6 +119,8 @@
     statusLabel={preview.statusLabel}
     class="bg-muted/20 hover:bg-muted/35"
     onclick={selectTool}
+    aria-label={`${open ? 'Collapse' : 'Expand'} ${toolPanelLabel}`}
+    title={`${open ? 'Collapse' : 'Expand'} ${preview.toolName} details`}
   />
   <AiTool.ToolContent>
     {#if preview.input}

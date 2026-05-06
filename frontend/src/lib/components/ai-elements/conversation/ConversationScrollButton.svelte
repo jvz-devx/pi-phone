@@ -43,8 +43,9 @@
 		class="absolute bottom-4 left-[50%] translate-x-[-50%]"
 	>
 		<Button
+			aria-label="Scroll to latest message"
 			class={cn(
-				"bg-background/80 border-border/50 hover:bg-background/90 rounded-full shadow-lg backdrop-blur-sm hover:shadow-xl",
+				"bg-background/80 border-border/50 hover:bg-background/90 rounded-full shadow-sm backdrop-blur-sm hover:shadow-md",
 				className
 			)}
 			onclick={handleScrollToBottom}

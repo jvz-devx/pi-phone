@@ -165,19 +165,19 @@
           <PanelRight class="size-4" aria-hidden="true" />
         </Button>
 
-        <Button class="hidden gap-2 lg:inline-flex" type="button" variant={leftOpen ? 'secondary' : 'outline'} size="sm" aria-pressed={leftOpen} onclick={openSessions}>
+        <Button class="hidden gap-2 lg:inline-flex" type="button" variant={leftOpen ? 'secondary' : 'outline'} size="sm" aria-pressed={leftOpen} aria-label="Open sessions panel, shortcut S" title="Open sessions (S)" onclick={openSessions}>
           <PanelLeft class="size-4" aria-hidden="true" />
-          Sessions
+          Sessions <span class="text-[0.65rem] text-muted-foreground">S</span>
         </Button>
-        <Button class="hidden gap-2 lg:inline-flex" type="button" variant="outline" size="sm" onclick={openActions}>
+        <Button class="hidden gap-2 lg:inline-flex" type="button" variant="outline" size="sm" aria-label="Open actions panel" title="Open actions" onclick={openActions}>
           <SlidersHorizontal class="size-4" aria-hidden="true" />
           Actions
         </Button>
-        <Button class="hidden gap-2 lg:inline-flex" type="button" variant={rightOpen ? 'secondary' : 'outline'} size="sm" aria-pressed={rightOpen} onclick={openInspector}>
+        <Button class="hidden gap-2 lg:inline-flex" type="button" variant={rightOpen ? 'secondary' : 'outline'} size="sm" aria-pressed={rightOpen} aria-label="Open inspector panel" title="Open inspector" onclick={openInspector}>
           <PanelRight class="size-4" aria-hidden="true" />
           Inspector
         </Button>
-        <Button type="button" variant="ghost" size="icon" aria-label="Refresh Pi state" onclick={onRefresh}>
+        <Button type="button" variant="ghost" size="icon" aria-label="Refresh Pi state" title="Refresh Pi state" onclick={onRefresh}>
           <RefreshCw class={cn('size-4', appState.connection.connectionState === 'health-loading' && 'animate-spin')} aria-hidden="true" />
         </Button>
         {#if appState.auth.loginOpen || appState.connection.connectionState === 'auth-required'}
@@ -212,6 +212,8 @@
         <div class="mt-1 truncate">{status?.connectedClients ?? appState.auth.health?.connectedClients ?? 0} connected</div>
       </div>
     </div>
+
+    <p class="sr-only">Desktop shortcuts: C opens commands, S opens sessions, J jumps to latest, period stops a running response, Enter sends from the composer.</p>
 
     {#if banners.length}
       <div class="grid gap-1.5" aria-live="polite">
